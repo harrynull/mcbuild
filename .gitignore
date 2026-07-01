@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+runs/
+*.egg-info/
+.pytest_cache/
+dist/
+build/
+*.png
+*.mcmeta

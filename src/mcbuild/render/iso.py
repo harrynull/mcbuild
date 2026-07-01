@@ -130,7 +130,13 @@ def _normalized_blocks(
         return [], (0, 0, 0)
     (minx, miny, minz), (maxx, maxy, maxz) = bounds
     dims = (maxx - minx + 1, maxy - miny + 1, maxz - minz + 1)
-    blocks = [(x - minx, y - miny, z - minz, idx) for (x, y, z), idx in grid.items()]
+    # Blocks with no known appearance yet are treated as air in the preview render
+    # (still placed/exported normally — see Block.renderable).
+    blocks = [
+        (x - minx, y - miny, z - minz, idx)
+        for (x, y, z), idx in grid.items()
+        if get_block_by_index(idx).renderable
+    ]
     return blocks, dims
 
 
@@ -218,6 +224,8 @@ def render_topdown(grid: VoxelGrid, cell: int = 6) -> Image.Image:
     top_y: dict[tuple[int, int], int] = {}
     top_idx: dict[tuple[int, int], int] = {}
     for (x, y, z), idx in grid.items():
+        if not get_block_by_index(idx).renderable:
+            continue  # treated as air until it has a known appearance
         key = (x - minx, z - minz)
         if key not in top_y or y > top_y[key]:
             top_y[key] = y

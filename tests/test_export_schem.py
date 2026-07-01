@@ -29,27 +29,31 @@ def test_schem_round_trip(tmp_path):
     out_path = tmp_path / "test.schem"
     export_schem(grid, str(out_path))
 
-    loaded = nbtlib.load(str(out_path))
-    assert int(loaded["Version"]) == 2
-    assert int(loaded["DataVersion"]) == DATA_VERSION
-    assert int(loaded["Width"]) == 3
-    assert int(loaded["Height"]) == 3
-    assert int(loaded["Length"]) == 3
+    root = nbtlib.load(str(out_path))
+    assert "Schematic" in root, "root must contain a 'Schematic' tag (Sponge v3)"
+    schematic = root["Schematic"]
 
-    palette = {str(k): int(v) for k, v in loaded["Palette"].items()}
+    assert int(schematic["Version"]) == 3
+    assert int(schematic["DataVersion"]) == DATA_VERSION
+    assert int(schematic["Width"]) == 3
+    assert int(schematic["Height"]) == 3
+    assert int(schematic["Length"]) == 3
+
+    blocks = schematic["Blocks"]
+    palette = {str(k): int(v) for k, v in blocks["Palette"].items()}
     assert "minecraft:stone" in palette
     assert "minecraft:glass" in palette
     assert "minecraft:air" in palette
 
-    raw_bytes = bytes(b & 0xFF for b in loaded["BlockData"])
-    volume = int(loaded["Width"]) * int(loaded["Height"]) * int(loaded["Length"])
+    raw_bytes = bytes(b & 0xFF for b in blocks["Data"])
+    volume = int(schematic["Width"]) * int(schematic["Height"]) * int(schematic["Length"])
     values = _decode_varints(raw_bytes, volume)
 
     id_to_name = {v: k for k, v in palette.items()}
     stone_id = palette["minecraft:stone"]
     glass_id = palette["minecraft:glass"]
 
-    width, length = int(loaded["Width"]), int(loaded["Length"])
+    width, length = int(schematic["Width"]), int(schematic["Length"])
 
     def idx_of(x, y, z):
         return x + z * width + y * width * length
@@ -65,6 +69,6 @@ def test_offset_matches_grid_min_bounds(tmp_path):
     run_blueprint("set_block(-2, -3, -1, 'stone')\nset_block(0, 0, 0, 'stone')", grid)
     out_path = tmp_path / "offset.schem"
     export_schem(grid, str(out_path))
-    loaded = nbtlib.load(str(out_path))
-    offset = list(loaded["Offset"])
+    root = nbtlib.load(str(out_path))
+    offset = list(root["Schematic"]["Offset"])
     assert offset == [-2, -3, -1]

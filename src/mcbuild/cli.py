@@ -67,6 +67,7 @@ def build(
     reference: bool = typer.Option(False, "--reference/--no-reference"),
     ref_model: str = typer.Option("openai/gpt-image-2", "--ref-model"),
     reasoning: str = typer.Option("medium", "--reasoning", help="off|low|medium|high"),
+    stream: bool = typer.Option(True, "--stream/--no-stream", help="Stream reasoning/completion text live."),
     cost_ceiling: float | None = typer.Option(
         None, "--cost-ceiling", help="Abort (keeping the best build so far) once usage cost reaches this many USD."
     ),
@@ -86,6 +87,7 @@ def build(
         out_dir=out,
         reference=reference,
         reasoning=reasoning,
+        stream=stream,
         cost_ceiling=cost_ceiling,
     )
 
@@ -117,9 +119,34 @@ def build(
             console.print(f"[green]Saved concept reference:[/green] {rundir.root / 'reference.png'}")
             _display_image(reference_image, config.display)
 
+    stream_state = {"reasoning": False, "content": False}
+
     def on_event(event_type: str, data: dict) -> None:
-        if event_type == "assistant_text":
-            console.print(Panel(data["text"], title="design brief", border_style="cyan"))
+        if event_type == "turn_start":
+            stream_state["reasoning"] = False
+            stream_state["content"] = False
+        elif event_type == "reasoning_delta":
+            if not stream_state["reasoning"]:
+                console.print("[dim italic]reasoning:[/dim italic] ", end="")
+            stream_state["reasoning"] = True
+            console.print(data["text"], end="", style="dim italic")
+        elif event_type == "content_delta":
+            if not stream_state["content"]:
+                if stream_state["reasoning"]:
+                    console.print()  # close the reasoning line first
+                console.print("[cyan]assistant:[/cyan] ", end="")
+            stream_state["content"] = True
+            console.print(data["text"], end="")
+        elif event_type == "reasoning":
+            if stream_state["reasoning"]:
+                console.print()  # already streamed live; just close the line
+            else:
+                console.print(Panel(f"[dim italic]{data['text']}[/dim italic]", title="reasoning", border_style="grey50"))
+        elif event_type == "assistant_text":
+            if stream_state["content"]:
+                console.print()  # already streamed live; just close the line
+            else:
+                console.print(Panel(data["text"], title="assistant", border_style="cyan"))
         elif event_type == "submit_blueprint":
             console.print(
                 Panel(

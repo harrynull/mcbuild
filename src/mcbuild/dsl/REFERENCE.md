@@ -99,3 +99,8 @@ for i in range(4):
         with translate(6, 0, 0):
             cylinder(0, 0, 0, height=6, r=1, block="cobblestone")  # 4 corner turrets
 ```
+
+
+NOTE:
+1. Do NOT use import statements.
+2. Do NOT call rng.seed. It has been pre-seeded for you.

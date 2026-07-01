@@ -17,4 +17,5 @@ class Config:
     reference: bool = False
     reasoning: str = "medium"  # off|low|medium|high
     cost_ceiling: float | None = None
-    max_consecutive_failures: int = 3
+    max_consecutive_failures: int = 10
+    stream: bool = True

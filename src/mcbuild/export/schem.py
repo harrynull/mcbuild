@@ -1,4 +1,9 @@
-"""Sponge Schematic v2 export (WorldEdit-compatible .schem), via nbtlib.
+"""Sponge Schematic v3 export (WorldEdit-compatible .schem), via nbtlib.
+
+WorldEdit 7.3+ loads modern .schem files via SpongeSchematicV3Reader, which expects
+an unnamed root compound containing a child "Schematic" tag, with block data nested
+under "Blocks" (not the flat v2 layout). See:
+https://github.com/EngineHub/WorldEdit/blob/master/worldedit-core/src/main/java/com/sk89q/worldedit/extent/clipboard/io/sponge/SpongeSchematicV3Reader.java
 
 DataVersion 3953 corresponds to Minecraft 1.21.1.
 """
@@ -6,7 +11,7 @@ DataVersion 3953 corresponds to Minecraft 1.21.1.
 from __future__ import annotations
 
 import nbtlib
-from nbtlib.tag import ByteArray, Compound, Int, IntArray, Short
+from nbtlib.tag import ByteArray, Compound, Int, IntArray, List, Short
 
 from mcbuild.palette import get_block_by_index
 from mcbuild.voxel import VoxelGrid
@@ -33,7 +38,7 @@ def _to_signed_byte(b: int) -> int:
 
 
 def grid_to_schematic(grid: VoxelGrid) -> Compound:
-    """Build the root NBT compound for a Sponge Schematic v2 file."""
+    """Build the root NBT compound for a Sponge Schematic v3 file."""
     bounds = grid.bounds
     if bounds is None:
         raise ValueError("Cannot export an empty voxel grid.")
@@ -64,24 +69,29 @@ def grid_to_schematic(grid: VoxelGrid) -> Compound:
     for v in dense:
         block_data_bytes.extend(_varint(v))
 
-    return Compound(
+    schematic = Compound(
         {
-            "Version": Int(2),
+            "Version": Int(3),
             "DataVersion": Int(DATA_VERSION),
             "Width": Short(width),
             "Height": Short(height),
             "Length": Short(length),
             "Offset": IntArray([minx, miny, minz]),
-            "PaletteMax": Int(len(palette_compound)),
-            "Palette": palette_compound,
-            "BlockData": ByteArray([_to_signed_byte(b) for b in block_data_bytes]),
-            "Metadata": Compound({}),
+            "Blocks": Compound(
+                {
+                    "Palette": palette_compound,
+                    "Data": ByteArray([_to_signed_byte(b) for b in block_data_bytes]),
+                    "BlockEntities": List[Compound]([]),
+                }
+            ),
+            "Entities": List[Compound]([]),
         }
     )
+    return Compound({"Schematic": schematic})
 
 
 def export_schem(grid: VoxelGrid, path: str) -> None:
-    """Write the grid to a gzipped Sponge Schematic v2 (.schem) file at `path`."""
+    """Write the grid to a gzipped Sponge Schematic v3 (.schem) file at `path`."""
     root = grid_to_schematic(grid)
     nbt_file = nbtlib.File(root, gzipped=True, root_name="")
     nbt_file.save(path)

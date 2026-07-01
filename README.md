@@ -38,6 +38,8 @@ mcbuild PROMPT
   --reference/--no-reference   Generate a concept-reference image first  [default: no-reference]
   --ref-model TEXT        [default: openai/gpt-image-2]
   --reasoning TEXT        off|low|medium|high  [default: medium]
+  --stream/--no-stream    Stream reasoning/completion text live  [default: stream]
+  --cost-ceiling FLOAT    Abort (keeping the best build so far) once usage cost reaches this many USD
 ```
 
 `--display auto` probes the terminal for sixel support (via a DA1 query) and

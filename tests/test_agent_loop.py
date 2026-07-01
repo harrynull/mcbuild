@@ -30,6 +30,15 @@ def test_agent_loop_error_then_fix_then_finish(tmp_path):
     # error occurs before the successful render
     assert event_types.index("blueprint_error") < event_types.index("render")
 
+    # the fixed-submit turn carries both reasoning and commentary text alongside its
+    # tool call — both must surface as events, not just get swallowed into session.json
+    assert "reasoning" in event_types
+    assert "assistant_text" in event_types
+    reasoning_event = next(d for t, d in events if t == "reasoning")
+    assistant_text_event = next(d for t, d in events if t == "assistant_text")
+    assert "stone" in reasoning_event["text"].lower()
+    assert "doorway" in assistant_text_event["text"].lower()
+
     session_path = rundir.root / "session.json"
     assert session_path.exists()
 
@@ -61,6 +70,37 @@ def test_agent_loop_respects_cost_ceiling(tmp_path):
     assert result.finished is False
     assert "cost ceiling" in result.summary.lower()
     assert ("abort", {"reason": "cost ceiling of $0.50 reached"}) in events
+
+
+def test_agent_loop_emits_turn_start_and_deltas_when_streaming(tmp_path):
+    class StreamingFakeLLM(FakeLLM):
+        def chat(self, model, messages, tools=None, reasoning="off", stream=False, on_delta=None, **kwargs):
+            result = super().chat(model, messages, tools=tools, reasoning=reasoning)
+            if stream and on_delta:
+                msg = result.message
+                if getattr(msg, "reasoning", None):
+                    on_delta("reasoning", msg.reasoning)
+                if getattr(msg, "content", None):
+                    on_delta("content", msg.content)
+            return result
+
+    llm = StreamingFakeLLM()
+    config = Config(max_iters=6, seed=1, stream=True)
+    rundir = RunDir.create("a tiny stone hut", base=str(tmp_path))
+
+    events: list[tuple[str, dict]] = []
+    result = run_agent("a tiny stone hut", llm, config, rundir, on_event=lambda t, d: events.append((t, d)))
+
+    assert result.finished is True
+    event_types = [e[0] for e in events]
+    assert event_types.count("turn_start") == 4  # design brief, broken submit, fixed submit, finish
+    assert "reasoning_delta" in event_types
+    assert "content_delta" in event_types
+
+    reasoning_delta_text = "".join(d["text"] for t, d in events if t == "reasoning_delta")
+    content_delta_text = "".join(d["text"] for t, d in events if t == "content_delta")
+    assert "stone" in reasoning_delta_text.lower()
+    assert "doorway" in content_delta_text.lower()
 
 
 def test_agent_loop_respects_max_iters(tmp_path):

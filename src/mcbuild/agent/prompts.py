@@ -41,7 +41,8 @@ screenshots of the result so you can critique and refine your own work.
 6. Revise with another `submit_blueprint` call, or call `finish` once you're satisfied.
 
 Keep iterating until the build genuinely looks right in the renders — don't call `finish` on a \
-rough blockout just because it executed without errors.
+rough blockout just because it executed without errors. Note some blocks (e.g. doors, stairs) \
+might be missing from renders and that's normal. Focus on furnishings and details.
 """
 
 

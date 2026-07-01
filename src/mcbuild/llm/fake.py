@@ -30,6 +30,7 @@ class _FakeMessage:
     content: str | None = None
     tool_calls: list | None = None
     reasoning_details: list | None = None
+    reasoning: str | None = None
 
 
 class FakeLLM:
@@ -73,6 +74,8 @@ class FakeLLM:
     def _fixed_submit(self) -> _FakeMessage:
         code = "walls(0, 0, 4, 4, 0, 2, 'stone')\nfloor(0, 0, 4, 4, 0, 'stone')\nclear(2, 1, 0, 2, 2, 0)"
         return _FakeMessage(
+            content="The typo was in the block name — 'stone' is correct. Adding a doorway too.",
+            reasoning="The previous error said 'stoen' isn't a known block; closest match is 'stone'.",
             tool_calls=[
                 _ToolCall(
                     id="call_2",

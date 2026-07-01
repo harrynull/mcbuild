@@ -24,8 +24,13 @@ def encode_sixel(img: Image.Image, max_colors: int = 255, bg: tuple[int, int, in
     width, height = quantized.size
     pixels = quantized.load()
 
-    parts = ["\x1bPq"]
-    for c in range(max_colors):
+    used_colors = sorted({pixels[x, y] for y in range(height) for x in range(width)})
+
+    # "1;1;<Ph>;<Pv>" raster attributes: 1:1 pixel aspect ratio + explicit image size.
+    # Without this many terminals guess the aspect ratio (often 2:1) and stretch/squish
+    # the image instead of rendering it at its true pixel dimensions.
+    parts = ["\x1bPq", f'"1;1;{width};{height}']
+    for c in used_colors:
         r = palette[c * 3] if c * 3 < len(palette) else 0
         g = palette[c * 3 + 1] if c * 3 + 1 < len(palette) else 0
         b = palette[c * 3 + 2] if c * 3 + 2 < len(palette) else 0

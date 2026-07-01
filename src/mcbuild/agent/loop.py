@@ -38,6 +38,23 @@ def _safe_json_loads(s: str) -> dict:
         return {}
 
 
+def _extract_reasoning_text(msg: Any) -> str:
+    """Best-effort plain-text reasoning summary, for CLI display (not sent back to the API)."""
+    text = getattr(msg, "reasoning", None)
+    if text:
+        return str(text)
+    details = getattr(msg, "reasoning_details", None) or []
+    parts: list[str] = []
+    for block in details:
+        if isinstance(block, dict):
+            piece = block.get("text") or block.get("summary")
+        else:
+            piece = getattr(block, "text", None) or getattr(block, "summary", None)
+        if piece:
+            parts.append(str(piece))
+    return "\n".join(parts)
+
+
 def _message_to_dict(msg: Any) -> dict:
     d: dict[str, Any] = {"role": "assistant", "content": getattr(msg, "content", None) or ""}
     tool_calls = getattr(msg, "tool_calls", None)
@@ -134,9 +151,20 @@ def run_agent(
     llm_turns = 0
     max_llm_turns = config.max_iters * 4 + 4  # generous cap so text-only turns can't loop forever
 
+    def on_delta(kind: str, text: str) -> None:
+        emit(f"{kind}_delta", text=text)
+
     while iteration < config.max_iters and llm_turns < max_llm_turns:
         llm_turns += 1
-        result = llm.chat(model=config.model, messages=messages, tools=tools.ALL_TOOLS, reasoning=config.reasoning)
+        emit("turn_start")
+        result = llm.chat(
+            model=config.model,
+            messages=messages,
+            tools=tools.ALL_TOOLS,
+            reasoning=config.reasoning,
+            stream=config.stream,
+            on_delta=on_delta,
+        )
         msg = result.message
         messages.append(_message_to_dict(msg))
 
@@ -144,10 +172,15 @@ def run_agent(
             emit("abort", reason=f"cost ceiling of ${config.cost_ceiling:.2f} reached")
             return finalize(False, f"Aborted: cost ceiling of ${config.cost_ceiling:.2f} reached.")
 
+        reasoning_text = _extract_reasoning_text(msg)
+        if reasoning_text:
+            emit("reasoning", text=reasoning_text)
+        content_text = getattr(msg, "content", "") or ""
+        if content_text:
+            emit("assistant_text", text=content_text)
+
         tool_calls = getattr(msg, "tool_calls", None) or []
         if not tool_calls:
-            text = getattr(msg, "content", "") or ""
-            emit("assistant_text", text=text)
             messages.append(
                 {"role": "user", "content": "Please proceed: call submit_blueprint with your design, or finish() if already done."}
             )

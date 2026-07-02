@@ -86,12 +86,13 @@ def render_from_camera(
     height: int = 480,
     max_blocks: int = MAX_EXPOSED_BLOCKS,
     keep: Callable[[tuple], bool] | None = None,
+    shadows: bool = True,
 ) -> Image.Image:
     faces = _build_draw_faces(grid, max_blocks, keep=keep)
     if not faces:
         return Image.new("RGBA", (width, height), (0, 0, 0, 0))
     view = raster.make_view(camera.position, camera.look_at, camera.up, camera.view_size, width, height)
-    img = raster.rasterize(faces, view)
+    img = raster.rasterize(faces, view, shadows=shadows)
     bbox = img.getbbox()
     return img.crop(bbox) if bbox else img
 
@@ -107,6 +108,7 @@ def render_isometric(
     width: int = 900,
     height: int = 900,
     max_blocks: int = MAX_EXPOSED_BLOCKS,
+    shadows: bool = True,
 ) -> Image.Image:
     """Dimetric render from a fixed isometric camera (4 azimuths via yaw), over the mesh path."""
     bounds = grid.bounds
@@ -132,6 +134,6 @@ def render_isometric(
     if not faces:
         return Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     view = raster.make_view(cam.position, cam.look_at, cam.up, cam.view_size, width, height)
-    img = raster.rasterize(faces, view)
+    img = raster.rasterize(faces, view, shadows=shadows)
     bbox = img.getbbox()
     return img.crop(bbox) if bbox else img

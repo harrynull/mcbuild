@@ -122,6 +122,23 @@ def test_depth_ordering_near_block_occludes_far():
     assert not close(opaque, blue * 0.72)  # far blue fully occluded
 
 
+def test_shadows_darken_and_are_deterministic():
+    # a raised roof over a floor: the roof should cast a shadow, darkening some pixels
+    grid = VoxelGrid()
+    run_blueprint("floor(0,0,8,8,0,'stone')\nfloor(2,2,6,6,5,'oak_planks')", grid)
+    cam = Camera(position=(20, 16, 20), look_at=(4, 1, 4), view_size=16)
+
+    lit = np.array(render_from_camera(grid, cam, shadows=False).convert("RGB")).astype(int)
+    shad = np.array(render_from_camera(grid, cam, shadows=True).convert("RGB")).astype(int)
+    assert lit.shape == shad.shape
+    # shadows only ever darken, and must darken at least some pixels
+    assert (shad <= lit + 1).all()
+    assert (shad < lit - 5).any()
+    # deterministic
+    again = np.array(render_from_camera(grid, cam, shadows=True).convert("RGB")).astype(int)
+    assert (shad == again).all()
+
+
 def test_exceeds_max_blocks_raises():
     grid = VoxelGrid()
     run_blueprint("floor(0,0,20,20,0,'stone')", grid)  # 441 exposed top cells

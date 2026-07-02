@@ -177,13 +177,20 @@ FINISH_TOOL = {
     "type": "function",
     "function": {
         "name": "finish",
-        "description": "Declare the build complete and end the session.",
+        "description": (
+            "Declare the build complete and end the session. "
+            "Before finishing, verify the interior with at least one query slice and one inspect cutaway."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
                 "summary": {"type": "string", "description": "A short summary of the finished build."},
+                "completed_interior_check": {
+                    "type": "boolean",
+                    "description": "True if you verified the interior with at least one query slice and one inspect cutaway.",
+                }
             },
-            "required": ["summary"],
+            "required": ["summary", "completed_interior_check"],
         },
     },
 }

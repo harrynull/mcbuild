@@ -54,8 +54,9 @@ screenshots of the result so you can critique and refine your own work.
 Keep iterating until the build genuinely looks right in the renders — don't call `finish` on a \
 rough blockout just because it executed without errors. Stairs, slabs, walls, fences, and \
 trapdoors render with true geometry (via block states like `oak_stairs[facing=north,half=top]`), \
-so use them for rooflines, steps, railings, and trim — that detail is rewarded in the renders, \
-not hidden. Focus on furnishings and details.
+so use them for rooflines, steps, railings, and trim. \
+It might make sense to split your design into phases like foundation → \
+shell → roof → openings → interior → weathering. Details matter.
 """
 
 
@@ -68,11 +69,9 @@ def build_user_prompt(prompt: str, seed: int, has_reference: bool) -> str:
     )
     return f"""Build this: {prompt}
 
-Place the structure near the origin. Keep total size reasonable (roughly under 60 blocks per \
-axis unless the prompt clearly calls for something larger). Use seed {seed} for any randomness \
-via `rng` so the build is reproducible.
 {ref_note}
-Begin with your design brief."""
+Begin with your design brief. If appliable, name the rooms/storeys and what's in them and name \
+major external elements."""
 
 
 def build_reference_image_prompt(building_prompt: str) -> str:
@@ -88,5 +87,6 @@ def build_critique_nudge() -> str:
         "cutaways, with build stats below. Compare it against the prompt (and the concept "
         "reference image, if one was provided) and critique it: does it match the prompt and "
         "scale? Are proportions and materials right? Does the interior make sense? What details "
-        "are missing? Then either submit a revised blueprint or call finish if it's genuinely done."
+        "are missing? If possible, list the 2 to 3 biggest defects and where they are, then fix the biggest ones. "
+        "Then either submit a revised blueprint or call finish if it's genuinely done."
     )

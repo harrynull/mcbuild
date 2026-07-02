@@ -231,6 +231,15 @@ def run_agent(
             args = _safe_json_loads(tc.function.arguments)
 
             if name == "finish":
+                if args.get("completed_interior_check") is not True:
+                    messages.append(
+                        _tool_result(
+                            tc.id,
+                            "Cannot finish: you must verify the interior with at least one query slice and one inspect cutaway.",
+                        )
+                    )
+                    continue
+
                 finished = True
                 finish_summary = args.get("summary", "")
                 messages.append(_tool_result(tc.id, "Build finished."))

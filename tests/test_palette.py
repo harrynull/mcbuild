@@ -23,3 +23,14 @@ def test_unknown_block_raises_with_suggestion():
 def test_suggest_returns_close_matches():
     matches = suggest("stoen")
     assert "stone" in matches
+
+
+def test_air_is_valid_and_non_renderable():
+    block = get_block("air")
+    assert block.mc_id == "minecraft:air"
+    assert block.renderable is False
+
+
+def test_cave_air_still_excluded():
+    with pytest.raises(PaletteError):
+        get_block("cave_air")

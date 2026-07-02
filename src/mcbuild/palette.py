@@ -21,25 +21,30 @@ from pathlib import Path
 REGISTRY_PATH = Path(__file__).resolve().parent / "assets" / "minecraft_block_registry.json"
 
 # Present in the registry but not meaningfully placeable as a build voxel.
-_EXCLUDED_NAMES = {"air", "cave_air", "void_air", "structure_void"}
+# Note: plain "air" IS allowed — it's a useful carve/erase block (renders as empty
+# space, exports as minecraft:air to actively clear terrain on paste). The remaining
+# entries are obscure technical variants with no build use.
+_EXCLUDED_NAMES = {"cave_air", "void_air", "structure_void"}
 
 
 @dataclass(frozen=True)
 class Block:
     """A single palette entry.
 
-    `renderable` is False for blocks with neither a curated color nor a texture
-    match (mostly shape variants — stairs, slabs, signs, banners, beds, ...).
-    The DSL still accepts them and they're placed/exported normally; the
-    renderer just skips drawing them for now (treated as air in the preview).
+    `name` is the bare base name (e.g. "oak_stairs"); `state` holds parsed block-state
+    props as sorted (key, value) pairs (e.g. (("facing","north"),("half","top"))), and
+    `mc_id` includes the `[state]` suffix for export. `renderable` is False only when no
+    color/texture can be resolved even from the base material (e.g. air) — such blocks are
+    still placed/exported but skipped by the preview renderer.
     """
 
     index: int
-    name: str  # bare name, e.g. "stone"
-    mc_id: str  # e.g. "minecraft:stone"
+    name: str  # bare base name, e.g. "oak_stairs"
+    mc_id: str  # e.g. "minecraft:oak_stairs[facing=north,half=top]"
     rgb: tuple[int, int, int]
     transparent: bool = False
     renderable: bool = True
+    state: tuple[tuple[str, str], ...] = ()
 
 
 class PaletteError(Exception):
@@ -226,7 +231,8 @@ def _texture_derived_color(name: str) -> tuple[tuple[int, int, int], bool] | Non
     tex = textures.get_face_texture(name, "side") or textures.get_face_texture(name, "top")
     if tex is None:
         return None
-    pixels = list(tex.getdata())
+    pixels = list(tex.convert("RGBA").tobytes())
+    pixels = list(zip(pixels[0::4], pixels[1::4], pixels[2::4], pixels[3::4]))
     opaque = [p for p in pixels if p[3] > 10]
     if not opaque:
         return None
@@ -241,41 +247,100 @@ def _texture_derived_color(name: str) -> tuple[tuple[int, int, int], bool] | Non
 
 
 def _resolve(name: str) -> tuple[tuple[int, int, int], bool] | None:
-    """Returns (rgb, transparent), or None if the block has no known appearance yet."""
+    """Resolve (rgb, transparent) for a block, falling back to its base material.
+
+    Tries: curated color → the block's own texture → the base-material texture (so
+    shape variants like `oak_stairs` pick up `oak_planks`). None if nothing resolves.
+    """
     curated = _CURATED.get(name)
     if curated is not None:
         return curated
-    return _texture_derived_color(name)
+    direct = _texture_derived_color(name)
+    if direct is not None:
+        return direct
+    from mcbuild.render import blockmodel  # local import: avoids an import cycle
+
+    base_tex = blockmodel._base_texture(name)
+    if base_tex is not None and base_tex != name:
+        return _texture_derived_color(base_tex)
+    return None
 
 
 _NAMES = _load_registry_names()
 _NAME_TO_INDEX: dict[str, int] = {name: i for i, name in enumerate(_NAMES)}
+_N_BASE = len(_NAMES)
+
+# Stateful blocks ("oak_stairs[facing=north,...]") get indices allocated above the base
+# registry range, on first use.
+_dynamic_index: dict[str, int] = {}
+_index_block: dict[int, Block] = {}
+
+
+def _parse_name(name: str) -> tuple[str, tuple[tuple[str, str], ...]]:
+    """Split "minecraft:oak_stairs[facing=north,half=top]" -> ("oak_stairs", sorted pairs)."""
+    if name.startswith("minecraft:"):
+        name = name[len("minecraft:") :]
+    if name.endswith("]") and "[" in name:
+        base, rest = name.split("[", 1)
+        pairs = []
+        for part in rest[:-1].split(","):
+            part = part.strip()
+            if not part:
+                continue
+            k, _, v = part.partition("=")
+            pairs.append((k.strip(), v.strip()))
+        return base.strip(), tuple(sorted(pairs))
+    return name.strip(), ()
+
+
+def _mc_id(base: str, state: tuple[tuple[str, str], ...]) -> str:
+    if not state:
+        return f"minecraft:{base}"
+    props = ",".join(f"{k}={v}" for k, v in state)
+    return f"minecraft:{base}[{props}]"
+
+
+def _build_block(index: int, base: str, state: tuple[tuple[str, str], ...]) -> Block:
+    resolved = _resolve(base)
+    if resolved is None:
+        return Block(index=index, name=base, mc_id=_mc_id(base, state), rgb=(0, 0, 0), renderable=False, state=state)
+    rgb, transparent = resolved
+    return Block(index=index, name=base, mc_id=_mc_id(base, state), rgb=rgb, transparent=transparent, state=state)
 
 
 @lru_cache(maxsize=None)
-def _make_block(index: int) -> Block:
-    name = _NAMES[index]
-    resolved = _resolve(name)
-    if resolved is None:
-        return Block(index=index, name=name, mc_id=f"minecraft:{name}", rgb=(0, 0, 0), renderable=False)
-    rgb, transparent = resolved
-    return Block(index=index, name=name, mc_id=f"minecraft:{name}", rgb=rgb, transparent=transparent)
+def _base_block(index: int) -> Block:
+    return _build_block(index, _NAMES[index], ())
 
 
 def get_block(name: str) -> Block:
-    """Look up a block by bare name (e.g. "oak_planks"). Accepts a "minecraft:" prefix too."""
-    if name.startswith("minecraft:"):
-        name = name[len("minecraft:") :]
-    index = _NAME_TO_INDEX.get(name)
-    if index is not None:
-        return _make_block(index)
-    suggestions = suggest(name)
-    hint = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
-    raise PaletteError(f"Unknown block '{name}'.{hint}")
+    """Look up a block by name, with optional block state, e.g. "oak_stairs[facing=north]".
+
+    Accepts a "minecraft:" prefix. The base name is validated against the registry; block
+    states are preserved for rendering and export but not individually validated.
+    """
+    base, state = _parse_name(name)
+    index = _NAME_TO_INDEX.get(base)
+    if index is None:
+        suggestions = suggest(base)
+        hint = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
+        raise PaletteError(f"Unknown block '{base}'.{hint}")
+    if not state:
+        return _base_block(index)
+
+    key = _mc_id(base, state)
+    dyn = _dynamic_index.get(key)
+    if dyn is None:
+        dyn = _N_BASE + len(_dynamic_index)
+        _dynamic_index[key] = dyn
+        _index_block[dyn] = _build_block(dyn, base, state)
+    return _index_block[dyn]
 
 
 def get_block_by_index(index: int) -> Block:
-    return _make_block(index)
+    if index < _N_BASE:
+        return _base_block(index)
+    return _index_block[index]
 
 
 def suggest(name: str, n: int = 3) -> list[str]:

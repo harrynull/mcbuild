@@ -46,6 +46,18 @@ class VoxelGrid:
         self._blocks.pop((x, y, z), None)
         # Bounds are allowed to be conservative (not shrunk) after a clear.
 
+    def clone(self) -> "VoxelGrid":
+        """Return an independent copy, safe to mutate without affecting this grid.
+
+        Blocks are (immutable tuple)->int, so a shallow dict copy is deep enough;
+        the bound lists are mutated in place, so they must be copied, not aliased.
+        """
+        new = VoxelGrid()
+        new._blocks = dict(self._blocks)
+        new._min = list(self._min) if self._min is not None else None
+        new._max = list(self._max) if self._max is not None else None
+        return new
+
     def _check_extent(self, x: int, y: int, z: int) -> None:
         if self._min is None or self._max is None:
             return

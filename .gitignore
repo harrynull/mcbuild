@@ -9,3 +9,4 @@ dist/
 build/
 *.png
 *.mcmeta
+src/mcbuild/assets/

@@ -55,8 +55,14 @@ def grid_to_schematic(grid: VoxelGrid) -> Compound:
         mc_id_to_palette_id[idx] = palette_id
         palette_compound[block.mc_id] = Int(palette_id)
 
-    air_palette_id = len(palette_compound)
-    palette_compound["minecraft:air"] = Int(air_palette_id)
+    # Unused volume is filled with air. If the build already places explicit "air"
+    # cells, reuse that palette entry rather than adding a duplicate (a duplicate
+    # would collide in the name-keyed Palette compound and corrupt the mapping).
+    if "minecraft:air" in palette_compound:
+        air_palette_id = int(palette_compound["minecraft:air"])
+    else:
+        air_palette_id = len(palette_compound)
+        palette_compound["minecraft:air"] = Int(air_palette_id)
 
     volume = width * height * length
     dense = [air_palette_id] * volume

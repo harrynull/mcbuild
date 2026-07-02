@@ -97,15 +97,36 @@ src/mcbuild/
   palette.py        curated block palette + fuzzy suggestions
   rundir.py         runs/<timestamp>-<slug>/ artifact management
   dsl/               sandbox, stdlib primitives, errors, REFERENCE.md
-  render/            isometric renderer, contact-sheet views, sixel encoder
+  render/            mesh rasterizer + free camera, iso contact sheet, sixel encoder,
+                     block geometry (blockmodel/blockstate), textures
   llm/               OpenRouter client, scripted offline FakeLLM
-  agent/             orchestration loop, prompts, tool schemas
-  export/            Sponge Schematic v2 (.schem) export
+  agent/             orchestration loop, prompts, tool schemas, text query views
+  export/            Sponge Schematic v3 (.schem) export
 ```
 
-## Notes / v1 limitations
+## Capabilities
 
-- Full-cube blocks only (no stairs/slabs/orientation states) — noted as a v2
-  stretch goal.
+- **Incremental editing**: `submit_blueprint` (full rebuild), `patch_blueprint` (delta against
+  the current build), `edit_region` (rebuild one bounding box, freeze the rest).
+- **Bulk + detail primitives**: `set_blocks`, `weighted_block`, `scatter`, `frame`, `window_grid`.
+- **Block states**: `"oak_stairs[facing=north,half=top]"` etc. render with true geometry (stairs,
+  slabs, walls, fences, fence gates, trapdoors, doors, panes) and export with the state suffix.
+- **Free 3D camera** for `inspect` (arbitrary position + look-at, orthographic z-buffer), plus
+  arbitrary/y-axis slices and a lossless text `query` tool (ASCII floor plans, point lookups,
+  material histograms).
+- **`'air'`** is placeable — carves/erases and is exported as `minecraft:air`.
+
+## Notes / limitations
+
+- Accurate geometry covers the core architectural shape families; other stateful blocks fall
+  back to full cubes, and blocks with no resolvable texture (e.g. `air`, `barrier`) don't render.
+- Block geometry is paired from bundled vanilla blockstate JSON + hardcoded shape templates
+  (the vanilla model JSONs are not shipped); silhouettes are correct, not pixel-exact-vanilla.
 - No cross-run memory / few-shot retrieval of past builds.
 - No RCON live placement; output is a `.schem` file for WorldEdit's `//schem load` + `//paste`.
+
+## Future work (backlog)
+
+- A structured plan/component-registry tool and gating `finish()` on a verification checklist.
+- Iteration diffs (blocks added/removed vs. the previous iteration) and richer stats
+  (per-storey counts, interior air volume, mirror-symmetry score).

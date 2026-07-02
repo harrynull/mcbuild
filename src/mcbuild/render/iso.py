@@ -140,75 +140,49 @@ def _normalized_blocks(
     return blocks, dims
 
 
-def render_iso(grid: VoxelGrid, yaw: int = 0, clip: str | None = None) -> Image.Image:
-    """Render an isometric view of the grid.
+def _slice_keep(grid: VoxelGrid, clip: str | None, slice_spec: tuple[str, int] | None):
+    """Build a world-coord keep-predicate for cutaways/slices, or None to keep everything."""
+    bounds = grid.bounds
+    if bounds is None:
+        return None
+    (minx, miny, minz), (maxx, maxy, maxz) = bounds
+    axis_index = {"x": 0, "y": 1, "z": 2}
 
-    yaw: 0-3, each step a 90-degree turn around the vertical axis.
-    clip: None, 'x', or 'z' — drop the near half along that axis for a cutaway view.
-    """
-    blocks, (X, Y, Z) = _normalized_blocks(grid)
-    if not blocks:
-        return Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-
+    if slice_spec is not None:
+        axis, at = slice_spec
+        if axis not in axis_index:
+            raise ValueError("slice axis must be 'x', 'y', or 'z'")
+        ai = axis_index[axis]
+        at = int(round(at))
+        return lambda c: c[ai] >= at
     if clip == "x":
-        blocks = [b for b in blocks if b[0] >= X // 2]
-    elif clip == "z":
-        blocks = [b for b in blocks if b[2] >= Z // 2]
+        mid = (minx + maxx) // 2
+        return lambda c: c[0] >= mid
+    if clip == "z":
+        mid = (minz + maxz) // 2
+        return lambda c: c[2] >= mid
+    return None
 
-    rotated = []
-    for x, y, z, idx in blocks:
-        rx, rz, RX, RZ = x, z, X, Z
-        for _ in range(yaw % 4):
-            rx, rz, RX, RZ = _rot90_xz(rx, rz, RX, RZ)
-        rotated.append((rx, y, rz, idx))
-    RX, RZ = X, Z
-    for _ in range(yaw % 4):
-        RX, RZ = RZ, RX
 
-    if not rotated:
-        return Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+def render_iso(
+    grid: VoxelGrid,
+    yaw: int = 0,
+    clip: str | None = None,
+    slice_spec: tuple[str, int] | None = None,
+) -> Image.Image:
+    """Render an isometric view of the grid via the shared mesh rasterizer.
 
-    occupied = {(x, y, z) for x, y, z, _ in rotated}
-    visible = []
-    for x, y, z, idx in rotated:
-        neighbors = (
-            (x + 1, y, z),
-            (x - 1, y, z),
-            (x, y + 1, z),
-            (x, y - 1, z),
-            (x, y, z + 1),
-            (x, y, z - 1),
-        )
-        if all(n in occupied for n in neighbors):
-            continue
-        visible.append((x, y, z, idx))
+    Full cubes and stateful blocks (stairs/slabs/fences/...) both render with true
+    geometry. yaw 0-3 selects one of four 90-degree azimuths.
 
-    tw2, th2 = TW // 2, TH // 2
-    min_sx = -(RZ - 1) * tw2
-    max_sx = (RX - 1) * tw2
-    min_sy = -(Y - 1) * WALL
-    max_sy = (RX - 1 + RZ - 1) * th2
-    ox = -min_sx + PAD
-    oy = -min_sy + PAD
-    canvas_w = max_sx - min_sx + TW + 2 * PAD
-    canvas_h = max_sy - min_sy + TH + WALL + 2 * PAD
+    clip: None, 'x', or 'z' — drop the near half along that axis (mid-plane cutaway).
+    slice_spec: (axis, at) in world coords for an arbitrary cutaway on 'x'/'y'/'z'
+        (keeps the far side); a 'y' slice reveals a storey from that height up. Overrides clip.
+    """
+    from mcbuild.render.camera import render_isometric
 
-    canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
-    visible.sort(key=lambda b: (b[1], b[0] + b[2], b[0]))
-
-    for x, y, z, idx in visible:
-        block = get_block_by_index(idx)
-        alpha = 170 if block.transparent else 255
-        sprite = _sprite(block.name, block.rgb, alpha)
-        sx = (x - z) * tw2 + ox
-        sy = (x + z) * th2 - y * WALL + oy
-        px, py = sx - tw2, sy - th2
-        canvas.alpha_composite(sprite, (px, py))
-
-    bbox = canvas.getbbox()
-    if bbox:
-        canvas = canvas.crop(bbox)
-    return canvas
+    keep = _slice_keep(grid, clip, slice_spec)
+    return render_isometric(grid, yaw=yaw, keep=keep)
 
 
 def render_topdown(grid: VoxelGrid, cell: int = 6) -> Image.Image:

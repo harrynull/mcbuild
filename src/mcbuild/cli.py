@@ -147,11 +147,15 @@ def build(
                 console.print()  # already streamed live; just close the line
             else:
                 console.print(Panel(data["text"], title="assistant", border_style="cyan"))
-        elif event_type == "submit_blueprint":
+        elif event_type in ("submit_blueprint", "patch_blueprint", "edit_region"):
+            region = data.get("region")
+            title = f"iteration {data['iteration']}: {event_type}"
+            if region:
+                title += f" region={region}"
             console.print(
                 Panel(
                     data["design_notes"] or "(no notes)",
-                    title=f"iteration {data['iteration']}: submit_blueprint",
+                    title=title,
                     border_style="blue",
                 )
             )
@@ -163,12 +167,21 @@ def build(
             stats = data["stats"]
             dims = stats["dims"]
             dims_str = f"{dims[0]}x{dims[1]}x{dims[2]}" if dims else "empty"
-            png_path = rundir.root / f"iter_{data['iteration']:02d}" / "render.png"
-            console.print(f"[green]render:[/green] {png_path}  dims={dims_str}  blocks={stats['block_count']}")
+            iter_dir = rundir.root / f"iter_{data['iteration']:02d}"
+            console.print(f"[green]render:[/green] {iter_dir / 'render.png'}  dims={dims_str}  blocks={stats['block_count']}")
+            if (iter_dir / "blueprint.schem").exists():
+                console.print(f"[green]schem:[/green]  {iter_dir / 'blueprint.schem'}")
             _display_image(data["image"], config.display)
         elif event_type == "inspect":
-            console.print(f"[cyan]inspect view (yaw={data['yaw']}, cutaway={data['cutaway']})[/cyan]")
+            if data.get("mode") == "camera":
+                console.print(f"[cyan]inspect (free camera pos={data['camera_pos']} look_at={data['look_at']})[/cyan]")
+            elif data.get("slice_axis") is not None:
+                console.print(f"[cyan]inspect view (yaw={data['yaw']}, slice {data['slice_axis']}={data['slice_at']})[/cyan]")
+            else:
+                console.print(f"[cyan]inspect view (yaw={data['yaw']}, cutaway={data.get('cutaway')})[/cyan]")
             _display_image(data["image"], config.display)
+        elif event_type == "query":
+            console.print(Panel(data["text"], title=f"query: {data['mode']}", border_style="cyan"))
         elif event_type == "finish":
             console.print(Panel(data["summary"], title="finished", border_style="green"))
         elif event_type == "abort":

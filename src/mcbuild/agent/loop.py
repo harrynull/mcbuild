@@ -8,12 +8,14 @@ from typing import Any, Callable
 
 from PIL import Image
 
-from mcbuild.agent import prompts, tools
+from mcbuild.agent import prompts, query, tools
 from mcbuild.config import Config
 from mcbuild.dsl import sandbox
 from mcbuild.dsl.errors import BlueprintError
+from mcbuild.export.schem import export_schem
 from mcbuild.llm.client import Usage, image_to_data_url
 from mcbuild.render import views
+from mcbuild.render.camera import Camera, CameraRenderError, render_from_camera
 from mcbuild.render.iso import render_iso
 from mcbuild.rundir import RunDir
 from mcbuild.voxel import VoxelGrid
@@ -36,6 +38,18 @@ def _safe_json_loads(s: str) -> dict:
         return json.loads(s) if s else {}
     except json.JSONDecodeError:
         return {}
+
+
+def _clear_region(grid: VoxelGrid, region) -> None:
+    """Remove every cell inside the inclusive bbox [x1,y1,z1,x2,y2,z2] from the grid."""
+    x1, y1, z1, x2, y2, z2 = (int(round(v)) for v in region)
+    xlo, xhi = sorted((x1, x2))
+    ylo, yhi = sorted((y1, y2))
+    zlo, zhi = sorted((z1, z2))
+    for x in range(xlo, xhi + 1):
+        for y in range(ylo, yhi + 1):
+            for z in range(zlo, zhi + 1):
+                grid.clear_block(x, y, z)
 
 
 def _extract_reasoning_text(msg: Any) -> str:
@@ -140,6 +154,7 @@ def run_agent(
 
     best_grid: VoxelGrid | None = None
     best_stats: dict | None = None
+    cumulative_source = ""  # full replayable program reflecting best_grid's construction
     iteration = 0
     consecutive_failures = 0
     image_marks: list[int] = []
@@ -147,6 +162,28 @@ def run_agent(
     def finalize(finished: bool, summary: str) -> AgentResult:
         rundir.write_json("session.json", _sanitize_messages_for_json(messages))
         return AgentResult(finished, summary, best_grid, best_stats, iteration, llm.total_usage)
+
+    def report_success(grid: VoxelGrid, iteration: int, iter_dir, tc) -> dict:
+        """Render/save/export a successful build and queue the critique image. Returns stats."""
+        sheet, stats = views.build_contact_sheet(grid)
+        rundir.save_image(f"iter_{iteration:02d}/render.png", sheet)
+        (iter_dir / "stats.json").write_text(json.dumps(stats, indent=2))
+        if len(grid) > 0:
+            export_schem(grid, str(iter_dir / "blueprint.schem"))
+        emit("render", iteration=iteration, stats=stats, image=sheet)
+        messages.append(_tool_result(tc.id, _format_stats_for_tool(stats)))
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompts.build_critique_nudge()},
+                    {"type": "image_url", "image_url": {"url": image_to_data_url(sheet)}},
+                ],
+            }
+        )
+        image_marks.append(len(messages) - 1)
+        _prune_old_images(messages, image_marks)
+        return stats
 
     llm_turns = 0
     max_llm_turns = config.max_iters * 4 + 4  # generous cap so text-only turns can't loop forever
@@ -221,24 +258,45 @@ def run_agent(
                     continue
 
                 consecutive_failures = 0
-                sheet, stats = views.build_contact_sheet(grid)
-                rundir.save_image(f"iter_{iteration:02d}/render.png", sheet)
-                (iter_dir / "stats.json").write_text(json.dumps(stats, indent=2))
-                best_grid, best_stats = grid, stats
-                emit("render", iteration=iteration, stats=stats, image=sheet)
+                cumulative_source = code  # a full submit RESETS the construction history
+                best_grid, best_stats = grid, report_success(grid, iteration, iter_dir, tc)
+                continue
 
-                messages.append(_tool_result(tc.id, _format_stats_for_tool(stats)))
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompts.build_critique_nudge()},
-                            {"type": "image_url", "image_url": {"url": image_to_data_url(sheet)}},
-                        ],
-                    }
-                )
-                image_marks.append(len(messages) - 1)
-                _prune_old_images(messages, image_marks)
+            if name in ("patch_blueprint", "edit_region"):
+                if best_grid is None:
+                    messages.append(
+                        _tool_result(tc.id, f"No build exists yet; call submit_blueprint before {name}.")
+                    )
+                    continue
+
+                iteration += 1
+                code = args.get("code", "")
+                design_notes = args.get("design_notes", "")
+                region = args.get("region") if name == "edit_region" else None
+                iter_dir = rundir.iter_dir(iteration)
+                (iter_dir / "patch.py").write_text(code, encoding="utf-8")
+                emit(name, iteration=iteration, design_notes=design_notes, code=code, region=region)
+
+                # Run against a CLONE so a failing patch never corrupts the current build.
+                candidate = best_grid.clone()
+                if name == "edit_region" and region is not None:
+                    _clear_region(candidate, region)
+                try:
+                    sandbox.run_blueprint(code, candidate, seed=config.seed)
+                except BlueprintError as e:
+                    consecutive_failures += 1
+                    emit("blueprint_error", iteration=iteration, error=str(e))
+                    messages.append(_tool_result(tc.id, f"{name} failed:\n{e}"))
+                    if consecutive_failures >= config.max_consecutive_failures:
+                        emit("abort", reason="too many consecutive blueprint failures")
+                        return finalize(False, "Aborted after repeated blueprint failures.")
+                    continue
+
+                consecutive_failures = 0
+                header = f"\n\n# --- {name}" + (f" region={region}" if region else "") + " ---\n"
+                cumulative_source = cumulative_source + header + code
+                (iter_dir / "blueprint.py").write_text(cumulative_source, encoding="utf-8")
+                best_grid, best_stats = candidate, report_success(candidate, iteration, iter_dir, tc)
                 continue
 
             if name == "inspect":
@@ -247,21 +305,60 @@ def run_agent(
                     continue
                 yaw = int(args.get("yaw", 0) or 0)
                 cutaway = args.get("cutaway", "none")
-                clip = None if cutaway in (None, "none") else cutaway
-                img = render_iso(best_grid, yaw=yaw, clip=clip)
-                emit("inspect", yaw=yaw, cutaway=cutaway, image=img)
+                slice_axis = args.get("slice_axis")
+                slice_at = args.get("slice_at")
+                camera_pos = args.get("camera_pos")
+                look_at = args.get("look_at")
+                if camera_pos is not None and look_at is not None:
+                    try:
+                        cam = Camera(position=tuple(camera_pos), look_at=tuple(look_at))
+                        img = render_from_camera(best_grid, cam)
+                    except CameraRenderError as e:
+                        messages.append(_tool_result(tc.id, f"Free-camera inspect failed: {e}"))
+                        continue
+                    label = f"Free-camera inspection (camera_pos={camera_pos}, look_at={look_at}):"
+                    emit("inspect", mode="camera", camera_pos=camera_pos, look_at=look_at, image=img)
+                elif slice_axis is not None and slice_at is not None:
+                    img = render_iso(best_grid, yaw=yaw, slice_spec=(slice_axis, int(slice_at)))
+                    label = f"Inspection view (yaw={yaw}, slice {slice_axis}={int(slice_at)}):"
+                    emit("inspect", yaw=yaw, slice_axis=slice_axis, slice_at=int(slice_at), image=img)
+                else:
+                    clip = None if cutaway in (None, "none") else cutaway
+                    img = render_iso(best_grid, yaw=yaw, clip=clip)
+                    label = f"Inspection view (yaw={yaw}, cutaway={cutaway}):"
+                    emit("inspect", yaw=yaw, cutaway=cutaway, image=img)
                 messages.append(_tool_result(tc.id, "Inspection render attached in the next message."))
                 messages.append(
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": f"Inspection view (yaw={yaw}, cutaway={cutaway}):"},
+                            {"type": "text", "text": label},
                             {"type": "image_url", "image_url": {"url": image_to_data_url(img)}},
                         ],
                     }
                 )
                 image_marks.append(len(messages) - 1)
                 _prune_old_images(messages, image_marks)
+                continue
+
+            if name == "query":
+                if best_grid is None:
+                    messages.append(_tool_result(tc.id, "Nothing has been built yet; call submit_blueprint first."))
+                    continue
+                mode = args.get("mode")
+                try:
+                    if mode == "slice":
+                        text = query.ascii_slice(best_grid, args.get("slice_axis", "y"), int(args.get("slice_at", 0)))
+                    elif mode == "point":
+                        text = query.point_query(best_grid, args.get("x", 0), args.get("y", 0), args.get("z", 0))
+                    elif mode == "histogram":
+                        text = query.material_histogram(best_grid, args.get("region"))
+                    else:
+                        text = f"Unknown query mode '{mode}'. Use slice, point, or histogram."
+                except (ValueError, TypeError) as e:
+                    text = f"query failed: {e}"
+                emit("query", mode=mode, text=text)
+                messages.append(_tool_result(tc.id, text))
                 continue
 
             messages.append(_tool_result(tc.id, f"Unknown tool '{name}'."))

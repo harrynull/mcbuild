@@ -64,6 +64,24 @@ def test_contact_sheet_builds_and_has_stats():
     assert len(stats["top_materials"]) > 0
 
 
+def test_render_iso_y_slice_shows_only_upper_storeys():
+    grid = VoxelGrid()
+    # two stacked floors: y=0 and y=4
+    run_blueprint("floor(0,0,5,5,0,'stone')\nfloor(0,0,5,5,4,'oak_planks')", grid)
+    full = render_iso(grid, yaw=0)
+    sliced = render_iso(grid, yaw=0, slice_spec=("y", 4))  # keep y>=4 only
+    # slicing away the ground floor changes the image and leaves it non-empty
+    assert sliced.getbbox() is not None
+    assert full.tobytes() != sliced.tobytes()
+
+
+def test_render_iso_slice_above_everything_is_empty():
+    grid = VoxelGrid()
+    run_blueprint("floor(0,0,3,3,0,'stone')", grid)
+    sliced = render_iso(grid, yaw=0, slice_spec=("y", 99))
+    assert sliced.getbbox() is None  # nothing kept
+
+
 def test_sixel_encoding_smoke():
     grid = _small_house_grid()
     img = render_iso(grid, yaw=0)

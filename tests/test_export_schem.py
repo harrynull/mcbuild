@@ -72,3 +72,32 @@ def test_offset_matches_grid_min_bounds(tmp_path):
     root = nbtlib.load(str(out_path))
     offset = list(root["Schematic"]["Offset"])
     assert offset == [-2, -3, -1]
+
+
+def test_explicit_air_placement_round_trips_as_minecraft_air(tmp_path):
+    grid = VoxelGrid()
+    # a solid slab with one cell explicitly carved to air
+    run_blueprint("fill(0, 0, 0, 2, 0, 2, 'stone')\nset_block(1, 0, 1, 'air')", grid)
+
+    out_path = tmp_path / "air.schem"
+    export_schem(grid, str(out_path))
+    root = nbtlib.load(str(out_path))
+    schematic = root["Schematic"]
+    blocks = schematic["Blocks"]
+
+    palette = {str(k): int(v) for k, v in blocks["Palette"].items()}
+    assert "minecraft:air" in palette
+
+    raw_bytes = bytes(b & 0xFF for b in blocks["Data"])
+    width = int(schematic["Width"])
+    length = int(schematic["Length"])
+    volume = width * int(schematic["Height"]) * length
+    values = _decode_varints(raw_bytes, volume)
+    id_to_name = {v: k for k, v in palette.items()}
+
+    def idx_of(x, y, z):
+        return x + z * width + y * width * length
+
+    # the explicitly-placed air cell serializes as minecraft:air (carves terrain on paste)
+    assert id_to_name[values[idx_of(1, 0, 1)]] == "minecraft:air"
+    assert id_to_name[values[idx_of(0, 0, 0)]] == "minecraft:stone"

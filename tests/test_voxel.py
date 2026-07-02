@@ -51,3 +51,22 @@ def test_to_dense_shape():
     assert arr.shape == (2, 2, 2)
     assert arr[0, 0, 0] == 3  # index 2 + 1
     assert arr[1, 1, 1] == 4  # index 3 + 1
+
+
+def test_clone_is_independent_copy():
+    grid = VoxelGrid()
+    grid.set(0, 0, 0, 5)
+    clone = grid.clone()
+    clone.set(1, 1, 1, 7)
+    assert grid.get(1, 1, 1) is None  # original untouched by clone's mutation
+    assert clone.get(0, 0, 0) == 5  # clone carries original data
+    assert len(grid) == 1 and len(clone) == 2
+
+
+def test_clone_bounds_do_not_alias():
+    grid = VoxelGrid()
+    grid.set(-2, 0, 3, 1)
+    clone = grid.clone()
+    clone.set(10, 10, 10, 2)  # expands clone bounds; must not touch original's
+    assert grid.bounds == ((-2, 0, 3), (-2, 0, 3))
+    assert clone.bounds == ((-2, 0, 3), (10, 10, 10))

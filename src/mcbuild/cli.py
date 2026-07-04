@@ -9,7 +9,9 @@ import typer
 from dotenv import load_dotenv
 from PIL import Image
 from rich.console import Console
+from rich.live import Live
 from rich.panel import Panel
+from rich.text import Text
 
 from mcbuild.agent.loop import run_agent
 from mcbuild.agent.prompts import build_reference_image_prompt
@@ -126,34 +128,79 @@ def build(
             console.print(f"[green]Saved concept reference:[/green] {rundir.root / 'reference.png'}")
             _display_image(reference_image, config.display)
 
-    stream_state = {"reasoning": False, "content": False}
+    # Streaming state for the current turn: reasoning/content each stream into their own
+    # live-updating panel (only one Live may be active on a console at a time, so reasoning
+    # is always torn down before content's Live starts). Reasoning is transient — once real
+    # output starts (or the turn ends), its panel is cleared and replaced by a one-line
+    # marker; assistant content is finalized into a permanent panel instead.
+    stream_state: dict = {
+        "reasoning_live": None,
+        "content_live": None,
+        "reasoning_buf": "",
+        "content_buf": "",
+        "reasoning_hidden_announced": False,
+    }
+
+    def _hide_reasoning_live(char_count: int) -> None:
+        live = stream_state["reasoning_live"]
+        if live is not None:
+            live.stop()
+            stream_state["reasoning_live"] = None
+        console.print(f"[dim]· reasoning ({char_count} chars) — hidden[/dim]")
+        stream_state["reasoning_hidden_announced"] = True
+
+    def _stop_dangling_lives() -> None:
+        """Safety net: tear down any Live left open by an early return (e.g. cost-ceiling abort)."""
+        if stream_state["reasoning_live"] is not None:
+            stream_state["reasoning_live"].stop()
+            stream_state["reasoning_live"] = None
+        if stream_state["content_live"] is not None:
+            stream_state["content_live"].stop()
+            stream_state["content_live"] = None
 
     def on_event(event_type: str, data: dict) -> None:
         if event_type == "turn_start":
-            stream_state["reasoning"] = False
-            stream_state["content"] = False
+            _stop_dangling_lives()
+            stream_state["reasoning_buf"] = ""
+            stream_state["content_buf"] = ""
+            stream_state["reasoning_hidden_announced"] = False
         elif event_type == "reasoning_delta":
-            if not stream_state["reasoning"]:
-                console.print("[dim italic]reasoning:[/dim italic] ", end="")
-            stream_state["reasoning"] = True
-            console.print(data["text"], end="", style="dim italic")
+            if stream_state["content_live"] is not None:
+                return  # content already started this turn; nothing sensible to show live
+            stream_state["reasoning_buf"] += data["text"]
+            if stream_state["reasoning_live"] is None:
+                stream_state["reasoning_live"] = Live(console=console, transient=True, refresh_per_second=12)
+                stream_state["reasoning_live"].start()
+            stream_state["reasoning_live"].update(
+                Panel(
+                    Text(stream_state["reasoning_buf"], style="dim italic"),
+                    title="reasoning",
+                    border_style="grey50",
+                )
+            )
         elif event_type == "content_delta":
-            if not stream_state["content"]:
-                if stream_state["reasoning"]:
-                    console.print()  # close the reasoning line first
-                console.print("[cyan]assistant:[/cyan] ", end="")
-            stream_state["content"] = True
-            console.print(data["text"], end="")
+            if stream_state["reasoning_live"] is not None:
+                # real output started: the thinking panel's job is done, hide it
+                _hide_reasoning_live(len(stream_state["reasoning_buf"]))
+            stream_state["content_buf"] += data["text"]
+            if stream_state["content_live"] is None:
+                stream_state["content_live"] = Live(console=console, transient=True, refresh_per_second=12)
+                stream_state["content_live"].start()
+            stream_state["content_live"].update(
+                Panel(Text(stream_state["content_buf"]), title="assistant", border_style="cyan")
+            )
         elif event_type == "reasoning":
-            if stream_state["reasoning"]:
-                console.print()  # already streamed live; just close the line
-            else:
+            if stream_state["reasoning_live"] is not None:
+                # streamed live but the turn ended before any content arrived to hide it
+                _hide_reasoning_live(len(data["text"]))
+            elif not stream_state["reasoning_hidden_announced"]:
+                # never streamed (non-streaming mode): show it in full, same as before
                 console.print(Panel(f"[dim italic]{data['text']}[/dim italic]", title="reasoning", border_style="grey50"))
         elif event_type == "assistant_text":
-            if stream_state["content"]:
-                console.print()  # already streamed live; just close the line
-            else:
-                console.print(Panel(data["text"], title="assistant", border_style="cyan"))
+            if stream_state["content_live"] is not None:
+                stream_state["content_live"].stop()
+                stream_state["content_live"] = None
+            console.print(Panel(data["text"], title="assistant", border_style="cyan"))
         elif event_type == "turn_usage":
             console.print(
                 f"[dim]turn {data['turn']}: {_fmt_tokens(data['prompt_tokens'])} in / "
@@ -199,9 +246,11 @@ def build(
         elif event_type == "finish":
             console.print(Panel(data["summary"], title="finished", border_style="green"))
         elif event_type == "abort":
+            _stop_dangling_lives()
             console.print(Panel(data["reason"], title="aborted", border_style="red"))
 
     result = run_agent(prompt, llm, config, rundir, reference_image=reference_image, on_event=on_event)
+    _stop_dangling_lives()
 
     usage = llm.total_usage
     reasoning_line = f"  reasoning tokens: {usage.reasoning_tokens}" if usage.reasoning_tokens else ""

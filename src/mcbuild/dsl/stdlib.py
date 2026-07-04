@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from types import SimpleNamespace
 
-from mcbuild.palette import get_block
+from mcbuild.palette import get_block as _resolve_block, get_block_by_index
 from mcbuild.voxel import VoxelGrid
 
 
@@ -110,7 +110,7 @@ def make_stdlib(grid: VoxelGrid, seed: int = 0) -> dict[str, object]:
         name = block.sample(_random) if isinstance(block, WeightedPalette) else block
         idx = _idx_cache.get(name)
         if idx is None:
-            idx = get_block(name).index
+            idx = _resolve_block(name).index
             _idx_cache[name] = idx
         return idx
 
@@ -185,6 +185,22 @@ def make_stdlib(grid: VoxelGrid, seed: int = 0) -> dict[str, object]:
         for x, y, z in _iter_box(x1, y1, z1, x2, y2, z2):
             wx, wy, wz = to_world(x, y, z)
             grid.clear_block(wx, wy, wz)
+
+    def get_block(x: float, y: float, z: float) -> str | None:
+        """Return the block placed earlier at (x, y, z), or None if nothing's there yet.
+
+        Reads through the same translate/mirror/rotate_y transforms set_block writes
+        through, so it sees the same coordinate you'd pass to set_block right now. The
+        string matches what you'd pass back in (e.g. "oak_stairs[facing=north,half=top]"),
+        so `get_block(x, y, z) == "stone"` works, and `set_block(x, y, z, get_block(x, y, z))`
+        round-trips. Useful for conditional detailing — e.g. only scatter moss onto cells
+        that are still the base wall material, or check a neighbor before placing trim.
+        """
+        wx, wy, wz = to_world(x, y, z)
+        idx = grid.get(wx, wy, wz)
+        if idx is None:
+            return None
+        return get_block_by_index(idx).mc_id.removeprefix("minecraft:")
 
     def hollow_box(
         x1: float,
@@ -453,6 +469,7 @@ def make_stdlib(grid: VoxelGrid, seed: int = 0) -> dict[str, object]:
         "set_blocks": set_blocks,
         "fill": fill,
         "clear": clear,
+        "get_block": get_block,
         "hollow_box": hollow_box,
         "walls": walls,
         "floor": floor,

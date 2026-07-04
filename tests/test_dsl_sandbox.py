@@ -91,3 +91,76 @@ def test_seeded_rng_is_deterministic():
     run_blueprint(src, grid1, seed=42)
     run_blueprint(src, grid2, seed=42)
     assert dict(grid1.items()) == dict(grid2.items())
+
+
+def test_get_block_returns_none_for_untouched_cell():
+    grid = VoxelGrid()
+    run_blueprint("x = get_block(0, 0, 0)\nset_block(9, 9, 9, 'stone' if x is None else 'glass')\n", grid)
+    assert grid.get(9, 9, 9) is not None
+    from mcbuild.palette import get_block as resolve
+
+    assert grid.get(9, 9, 9) == resolve("stone").index
+
+
+def test_get_block_returns_name_of_earlier_placed_block():
+    grid = VoxelGrid()
+    run_blueprint(
+        """
+set_block(0, 0, 0, 'stone')
+found = get_block(0, 0, 0)
+set_block(1, 0, 0, found)
+""",
+        grid,
+    )
+    assert grid.get(0, 0, 0) == grid.get(1, 0, 0)
+
+
+def test_get_block_round_trips_block_state():
+    grid = VoxelGrid()
+    run_blueprint(
+        """
+set_block(0, 0, 0, "oak_stairs[facing=north,half=top]")
+again = get_block(0, 0, 0)
+set_block(1, 0, 0, again)
+""",
+        grid,
+    )
+    assert grid.get(0, 0, 0) == grid.get(1, 0, 0)
+
+
+def test_get_block_reads_through_active_transforms():
+    grid = VoxelGrid()
+    run_blueprint(
+        """
+set_block(1, 0, 0, 'stone')
+with mirror('x', at=0):
+    seen = get_block(1, 0, 0)  # world coord (-1, 0, 0): nothing placed there yet
+    set_block(1, 0, 0, 'glass' if seen is None else 'stone')  # writes to (-1, 0, 0)
+""",
+        grid,
+    )
+    assert grid.get(-1, 0, 0) is not None
+    from mcbuild.palette import get_block as resolve
+
+    assert grid.get(-1, 0, 0) == resolve("glass").index
+
+
+def test_get_block_sees_cleared_cell_as_none_but_explicit_air_as_air():
+    grid = VoxelGrid()
+    run_blueprint(
+        """
+set_block(0, 0, 0, 'stone')
+set_block(1, 0, 0, 'stone')
+clear(0, 0, 0, 0, 0, 0)         # removed entirely -> None
+set_block(1, 0, 0, 'air')       # explicitly placed air -> still a block
+after_clear = get_block(0, 0, 0)
+after_air = get_block(1, 0, 0)
+set_block(5, 5, 5, 'glass' if after_clear is None else 'stone')
+set_block(6, 6, 6, 'diamond_block' if after_air == 'air' else 'stone')
+""",
+        grid,
+    )
+    from mcbuild.palette import get_block as resolve
+
+    assert grid.get(5, 5, 5) == resolve("glass").index
+    assert grid.get(6, 6, 6) == resolve("diamond_block").index

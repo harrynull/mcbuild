@@ -110,6 +110,9 @@ src/mcbuild/
   the accumulated blueprint source, then rerun it whole), `edit_region` (rebuild one bounding box,
   freeze the rest).
 - **Bulk + detail primitives**: `set_blocks`, `weighted_block`, `scatter`, `frame`, `window_grid`.
+- **`get_block(x, y, z)`**: reads back whatever the blueprint has placed at a cell so far (or
+  `None`), so later code can react to earlier code — skip already-weathered cells, check a
+  neighbor before placing trim, etc.
 - **Block states**: `"oak_stairs[facing=north,half=top]"` etc. render with true geometry (stairs,
   slabs, walls, fences, fence gates, trapdoors, doors, panes) and export with the state suffix.
 - **Free 3D camera** for `inspect` (arbitrary position + look-at, orthographic z-buffer), plus

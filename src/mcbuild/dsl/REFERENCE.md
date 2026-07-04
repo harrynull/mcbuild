@@ -66,6 +66,7 @@ set_block(x, y, z, block)
 set_blocks(entries, block=None)                            # batch: entries are (x,y,z) or (x,y,z,name)
 fill(x1, y1, z1, x2, y2, z2, block)                       # solid box, corners in any order
 clear(x1, y1, z1, x2, y2, z2)                              # remove blocks in a box
+get_block(x, y, z)                                         # block placed there so far, or None
 hollow_box(x1, y1, z1, x2, y2, z2, block, thickness=1)      # box shell (all 6 sides)
 walls(x1, z1, x2, z2, y1, y2, block, thickness=1)           # 4 vertical walls, no floor/ceiling
 floor(x1, z1, x2, z2, y, block)                             # flat rectangular plate at height y
@@ -79,6 +80,21 @@ cone(cx, cz, y, r, height, block, hollow=False)             # circular cone, bas
 
 gable_roof(x1, z1, x2, z2, y, block, ridge_axis='x', overhang=1)  # A-frame roof
 hip_roof(x1, z1, x2, z2, y, block, overhang=1)                     # 4-sided sloped roof
+```
+
+`get_block(x, y, z)` reads back whatever this program has placed at that cell so far (through
+the same `translate`/`mirror`/`rotate_y` transforms `set_block` writes through), returning
+`None` for a cell nothing has touched yet. Use it to make later code react to earlier code —
+skip re-weathering a cell that's already cracked, only trim a wall where it's still the base
+material, or check a neighbor before deciding what to place next:
+
+```python
+walls(0, 0, 8, 6, 0, 4, "cobblestone")
+scatter(0, 0, 0, 8, 4, 0, "mossy_cobblestone", density=0.2)
+for x in range(0, 9):
+    for y in range(0, 5):
+        if get_block(x, y, 0) == "cobblestone":   # skip cells scatter() already mossed
+            set_block(x, y, 0, "cracked_stone_bricks" if (x + y) % 5 == 0 else "cobblestone")
 ```
 
 ## Detail helpers

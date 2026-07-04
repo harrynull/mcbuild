@@ -3,6 +3,7 @@ import json
 from mcbuild.agent.loop import run_agent
 from mcbuild.config import Config
 from mcbuild.llm.fake import FakeLLM, _FnCall, _FakeMessage, _ToolCall
+from mcbuild.palette import get_block_by_index
 from mcbuild.rundir import RunDir
 
 
@@ -164,8 +165,11 @@ def test_success_result_includes_bounds_and_budget(tmp_path):
     assert "Edits remaining:" in texts
 
 
-def _str_replace(old_str, new_str, notes="x"):
-    return _tool_msg("str_replace", {"old_str": old_str, "new_str": new_str, "design_notes": notes})
+def _str_replace(old_str, new_str, notes="x", submit=True):
+    return _tool_msg(
+        "str_replace",
+        {"old_str": old_str, "new_str": new_str, "design_notes": notes, "submit": submit},
+    )
 
 
 # the source _fixed_submit hands to submit_blueprint (used as the old_str anchor below)
@@ -289,6 +293,72 @@ def test_str_replace_edits_cumulative_source(tmp_path):
     assert "walls(" in iter2_bp  # original submit code preserved
     assert "set_block(2, 2, 4, 'air')" in iter2_bp  # replacement present
     assert not (rundir.root / "iter_02" / "patch.py").exists()  # str_replace has no patch.py, only edit_region does
+
+
+def test_str_replace_submit_false_stages_without_building(tmp_path):
+    class StagingLLM(FakeLLM):
+        def __init__(self):
+            super().__init__()
+            self._script = [self._design_brief, self._fixed_submit, self._stage, self._finish]
+
+        def _stage(self):
+            return _str_replace(
+                "clear(2, 1, 0, 2, 2, 0)",
+                "clear(2, 1, 0, 2, 2, 0)\nset_block(2, 2, 4, 'air')",
+                notes="window (staged)",
+                submit=False,
+            )
+
+    llm = StagingLLM()
+    config = Config(max_iters=6, seed=1)
+    rundir = RunDir.create("a tiny stone hut", base=str(tmp_path))
+    result = run_agent("a tiny stone hut", llm, config, rundir)
+
+    assert result.finished is True
+    texts = _tool_texts(rundir)
+    assert any("staged" in t.lower() and "not built" in t.lower() for t in texts)
+    # no second iteration was ever built/rendered for the staged edit
+    assert not (rundir.root / "iter_02").exists()
+    # the staged edit never changed the exported grid (only submit=true builds do): (2,2,4) is
+    # a wall block from the original submit, still stone rather than the staged 'air'
+    assert result.grid is not None
+    idx = result.grid.get(2, 2, 4)
+    assert idx is not None
+    assert get_block_by_index(idx).name != "air"
+
+
+def test_str_replace_submit_false_does_not_spend_budget(tmp_path):
+    class StageThenBuildLLM(FakeLLM):
+        def __init__(self):
+            super().__init__()
+            self._script = [self._fixed_submit, self._stage, self._build, self._finish_ok]
+
+        def _stage(self):
+            return _str_replace(
+                "clear(2, 1, 0, 2, 2, 0)",
+                "clear(2, 1, 0, 2, 2, 0)\nset_block(2, 2, 4, 'air')",
+                submit=False,
+            )
+
+        def _build(self):
+            return _str_replace(
+                "set_block(2, 2, 4, 'air')",
+                "set_block(2, 2, 4, 'air')\nset_block(0, 4, 0, 'glass')",
+                submit=True,
+            )
+
+        def _finish_ok(self):
+            return _finish_msg()
+
+    llm = StageThenBuildLLM()
+    config = Config(max_iters=2, seed=1)  # would be exhausted if staging spent budget too
+    rundir = RunDir.create("hut", base=str(tmp_path))
+    result = run_agent("hut", llm, config, rundir)
+    assert result.finished is True
+    assert not any("Edit budget reached" in t for t in _tool_texts(rundir))
+    # both the staged (submit=False) edit and the later submitted edit made it into the final grid
+    assert get_block_by_index(result.grid.get(2, 2, 4)).name == "air"
+    assert get_block_by_index(result.grid.get(0, 4, 0)).name == "glass"
 
 
 def test_str_replace_old_str_not_found_returns_error(tmp_path):

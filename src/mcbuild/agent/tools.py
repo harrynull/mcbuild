@@ -39,11 +39,17 @@ STR_REPLACE_TOOL = {
             "EXACTLY ONE location in the current source (whitespace and all) — include enough "
             "surrounding context (a few lines) to make the match unique; if it matches zero or "
             "multiple times you get an error and nothing changes. `new_str` replaces that match. "
-            "The FULL resulting source is then re-run from scratch, so — unlike a raw code "
-            "delta — variables, helper functions, and transform contexts you defined elsewhere in "
-            "the source stay intact. On error the pre-edit build is left untouched and you get a "
-            "line-mapped traceback against the patched source. On success you get updated stats "
-            "and a fresh contact-sheet render. Requires a prior successful submit_blueprint."
+            "If `submit` is true (default), the FULL resulting source is re-run from scratch and "
+            "rendered — so, unlike a raw code delta, variables, helper functions, and transform "
+            "contexts you defined elsewhere in the source stay intact — and this uses one edit "
+            "from your budget. Set `submit` to false to stage the text edit WITHOUT building or "
+            "rendering it (free, no budget used) so you can batch several str_replace calls — "
+            "e.g. fix three unrelated spots — before spending a render on the combined result; "
+            "the staged edits apply in order and the next str_replace/submit_blueprint call with "
+            "submit=true (or the plain submit_blueprint tool) builds whatever has accumulated. "
+            "On a submitted error the pre-edit build is left untouched and you get a line-mapped "
+            "traceback against the patched source. On success you get updated stats and a fresh "
+            "contact-sheet render. Requires a prior successful submit_blueprint."
         ),
         "parameters": {
             "type": "object",
@@ -55,6 +61,11 @@ STR_REPLACE_TOOL = {
                 "new_str": {
                     "type": "string",
                     "description": "Text to replace old_str with.",
+                },
+                "submit": {
+                    "type": "boolean",
+                    "description": "If true (default), build and render after this edit and spend an edit. If false, only stage the text edit (free, no render).",
+                    "default": True,
                 },
                 "design_notes": {"type": "string", "description": "Brief notes on what this edit changes."},
             },

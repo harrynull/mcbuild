@@ -439,17 +439,11 @@ def run_agent(
                         _tool_result(tc.id, "No build exists yet; call submit_blueprint before str_replace.")
                     )
                     continue
-                if builds_done >= config.max_iters:
-                    messages.append(_tool_result(
-                        tc.id,
-                        "Edit budget reached — no edits remaining. Call finish() to export your best "
-                        "build (further build calls are ignored).",
-                    ))
-                    continue
 
                 old_str = args.get("old_str", "")
                 new_str = args.get("new_str", "")
                 design_notes = args.get("design_notes", "")
+                submit = args.get("submit", True)
 
                 occurrences = cumulative_source.count(old_str) if old_str else 0
                 if occurrences == 0:
@@ -467,8 +461,26 @@ def run_agent(
                     ))
                     continue
 
-                iteration += 1
                 new_source = cumulative_source.replace(old_str, new_str, 1)
+
+                if not submit:
+                    cumulative_source = new_source
+                    messages.append(_tool_result(
+                        tc.id,
+                        "Edit staged (free, not built/rendered yet). Call str_replace with submit=true "
+                        "(or submit_blueprint) when ready to build the accumulated edits.",
+                    ))
+                    continue
+
+                if builds_done >= config.max_iters:
+                    messages.append(_tool_result(
+                        tc.id,
+                        "Edit budget reached — no edits remaining. Call finish() to export your best "
+                        "build (further build calls are ignored).",
+                    ))
+                    continue
+
+                iteration += 1
                 iter_dir = rundir.iter_dir(iteration)
                 (iter_dir / "blueprint.py").write_text(new_source, encoding="utf-8")
                 emit("str_replace", iteration=iteration, design_notes=design_notes, code=new_source)

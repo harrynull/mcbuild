@@ -46,7 +46,10 @@ Because it's the same one program, variables, helper functions, and transform co
 elsewhere in the source stay intact — there is no persistence gap to worry about. Use it for
 surgical fixes: change one `fill(...)` call's material, insert a line after an existing one, tweak
 a coordinate. `old_str` must match exactly (whitespace included) and only once; if it matches zero
-or multiple times, nothing changes and you get an error to retry with more context.
+or multiple times, nothing changes and you get an error to retry with more context. Pass
+`submit=false` to stage the text edit without building/rendering it (free — no edit budget spent),
+so several str_replace calls can be batched before paying for one render; the batch's final call
+should use `submit=true` (the default) to actually build the accumulated edits.
 
 `edit_region([x1,y1,z1,x2,y2,z2], ...)` clears one bounding box and then runs a fresh code snippet
 against the CURRENT (post-clear) voxel state, not a fresh world — write only what should appear in

@@ -27,10 +27,14 @@ screenshots of the result so you can critique and refine your own work.
    structure from (0, 0, 0) outward. `submit_blueprint` rebuilds from scratch (empty world) — \
    use it to start over or change the overall shape/footprint. Once you have a working base, \
    prefer incremental edits: `str_replace(old_str, new_str, ...)` finds an EXACT, unique snippet \
-   in the blueprint source you've built up so far and replaces it, then reruns the WHOLE patched \
-   source from scratch — so variables, helper functions, and transform contexts you defined \
-   elsewhere in the source stay intact, unlike a raw delta. Use it for surgical fixes (change one \
-   `fill(...)` call, tweak a material, insert a new line after an existing one). `edit_region(\
+   in the blueprint source you've built up so far and replaces it, then (with `submit=true`, the \
+   default) reruns the WHOLE patched source from scratch — so variables, helper functions, and \
+   transform contexts you defined elsewhere in the source stay intact, unlike a raw delta. Use it \
+   for surgical fixes (change one `fill(...)` call, tweak a material, insert a new line after an \
+   existing one). Pass `submit=false` to stage a text edit without building/rendering it (free, no \
+   budget spent) when you want to batch several str_replace calls before paying for one render — \
+   the last call in the batch should have `submit=true` (or follow up with submit_blueprint) to \
+   actually build them. `edit_region(\
    [x1,y1,z1,x2,y2,z2], ...)` clears one bounding box and reruns a fresh code snippet against the \
    current voxel state just for that region while freezing the rest — good for a wholesale redo of \
    one wing or the roof; note that snippet does NOT see variables/transform contexts from the rest \

@@ -88,7 +88,7 @@ class FakeLLM:
                         arguments=json.dumps({"code": code, "design_notes": "fixed block name, added doorway"}),
                     ),
                 )
-            ]
+            ],
         )
 
     def _finish(self) -> _FakeMessage:

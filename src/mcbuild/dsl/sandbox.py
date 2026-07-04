@@ -92,13 +92,9 @@ class BudgetExceeded(Exception):
 def validate_ast(tree: ast.AST) -> None:
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
-            raise SandboxViolation(
-                "Import statements are not allowed in blueprints.", getattr(node, "lineno", None)
-            )
+            raise SandboxViolation("Import statements are not allowed in blueprints.", getattr(node, "lineno", None))
         if isinstance(node, ast.Attribute) and node.attr.startswith("_"):
-            raise SandboxViolation(
-                f"Access to attribute '{node.attr}' is not allowed.", node.lineno
-            )
+            raise SandboxViolation(f"Access to attribute '{node.attr}' is not allowed.", node.lineno)
         if isinstance(node, ast.Name) and node.id in BANNED_NAMES:
             raise SandboxViolation(f"Use of '{node.id}' is not allowed.", node.lineno)
 
@@ -142,9 +138,7 @@ def run_blueprint(
         if event == "line":
             counter["n"] += 1
             if counter["n"] > max_lines:
-                raise BudgetExceeded(
-                    f"Blueprint exceeded {max_lines:,} executed lines (possible infinite loop)."
-                )
+                raise BudgetExceeded(f"Blueprint exceeded {max_lines:,} executed lines (possible infinite loop).")
             if counter["n"] % 2000 == 0 and time.monotonic() - start > max_seconds:
                 raise BudgetExceeded(f"Blueprint exceeded {max_seconds}s execution budget.")
         return tracer

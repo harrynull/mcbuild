@@ -59,6 +59,7 @@ def _box_faces(box: Box) -> list[tuple[_Normal, list[_Corner], list[_Uv]]]:
 
 # --- rotation about the cell center (8,8,8), degrees ---
 
+
 def _rot(px: float, py: float, pz: float, ax: float, ay: float) -> tuple[float, float, float]:
     x, y, z = px - 8.0, py - 8.0, pz - 8.0
     if ax:
@@ -82,6 +83,7 @@ def _classify(normal) -> str:
 
 
 # --- shape templates: model-name predicate -> list[Box] (0..16) ---
+
 
 def _template_boxes(model: str) -> list[Box] | None:
     m = model
@@ -124,7 +126,15 @@ def _template_boxes(model: str) -> list[Box] | None:
 # --- base texture resolution (no model JSON, so heuristic from the block name) ---
 
 _SUFFIXES = (
-    "_stairs", "_slab", "_wall", "_fence_gate", "_fence", "_trapdoor", "_door", "_bars", "_pane",
+    "_stairs",
+    "_slab",
+    "_wall",
+    "_fence_gate",
+    "_fence",
+    "_trapdoor",
+    "_door",
+    "_bars",
+    "_pane",
 )
 
 

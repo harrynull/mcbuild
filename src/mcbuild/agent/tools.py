@@ -222,7 +222,7 @@ FINISH_TOOL = {
                     "type": "boolean",
                     "description": "True if you verified the interior with at least one query slice "
                     "and one inspect cutaway.",
-                }
+                },
             },
             "required": ["summary", "completed_interior_check"],
         },

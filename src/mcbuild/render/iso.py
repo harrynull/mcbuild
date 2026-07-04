@@ -137,9 +137,7 @@ def _normalized_blocks(
     # Blocks with no known appearance yet are treated as air in the preview render
     # (still placed/exported normally — see Block.renderable).
     blocks = [
-        (x - minx, y - miny, z - minz, idx)
-        for (x, y, z), idx in grid.items()
-        if get_block_by_index(idx).renderable
+        (x - minx, y - miny, z - minz, idx) for (x, y, z), idx in grid.items() if get_block_by_index(idx).renderable
     ]
     return blocks, dims
 

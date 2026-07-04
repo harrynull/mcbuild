@@ -14,7 +14,7 @@ def exposed_coords(occupied: set[Coord]) -> set[Coord]:
     valid coarse cull for every camera direction.
     """
     exposed = set()
-    for (x, y, z) in occupied:
+    for x, y, z in occupied:
         for dx, dy, dz in _NEIGHBORS:
             if (x + dx, y + dy, z + dz) not in occupied:
                 exposed.add((x, y, z))

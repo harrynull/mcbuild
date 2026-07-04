@@ -135,10 +135,7 @@ def _format_stats_for_tool(stats: dict) -> str:
         bounds_str = f" bounds=[x {minx}..{maxx}, y {miny}..{maxy}, z {minz}..{maxz}]"
     else:
         bounds_str = ""
-    return (
-        f"Build succeeded. dimensions={dims_str}{bounds_str} "
-        f"blocks={stats['block_count']} top_materials=[{mats}]"
-    )
+    return f"Build succeeded. dimensions={dims_str}{bounds_str} blocks={stats['block_count']} top_materials=[{mats}]"
 
 
 def _grid_delta(before: VoxelGrid, after: VoxelGrid) -> str:
@@ -378,11 +375,13 @@ def run_agent(
 
             if name == "submit_blueprint":
                 if builds_done >= config.max_iters:
-                    messages.append(_tool_result(
-                        tc.id,
-                        "Edit budget reached — no edits remaining. Call finish() to export your best "
-                        "build (further build calls are ignored).",
-                    ))
+                    messages.append(
+                        _tool_result(
+                            tc.id,
+                            "Edit budget reached — no edits remaining. Call finish() to export your best "
+                            "build (further build calls are ignored).",
+                        )
+                    )
                     continue
                 iteration += 1
                 code = args.get("code", "")
@@ -411,16 +410,16 @@ def run_agent(
 
             if name == "edit_region":
                 if best_grid is None:
-                    messages.append(
-                        _tool_result(tc.id, f"No build exists yet; call submit_blueprint before {name}.")
-                    )
+                    messages.append(_tool_result(tc.id, f"No build exists yet; call submit_blueprint before {name}."))
                     continue
                 if builds_done >= config.max_iters:
-                    messages.append(_tool_result(
-                        tc.id,
-                        "Edit budget reached — no edits remaining. Call finish() to export your best "
-                        "build (further build calls are ignored).",
-                    ))
+                    messages.append(
+                        _tool_result(
+                            tc.id,
+                            "Edit budget reached — no edits remaining. Call finish() to export your best "
+                            "build (further build calls are ignored).",
+                        )
+                    )
                     continue
 
                 iteration += 1
@@ -452,8 +451,9 @@ def run_agent(
                 header = f"\n\n# --- {name}" + (f" region={region}" if region else "") + " ---\n"
                 cumulative_source = cumulative_source + header + code
                 (iter_dir / "blueprint.py").write_text(cumulative_source, encoding="utf-8")
-                best_grid, best_stats = candidate, report_success(
-                    candidate, iteration, iter_dir, tc, note=delta + "\n" + budget_line()
+                best_grid, best_stats = (
+                    candidate,
+                    report_success(candidate, iteration, iter_dir, tc, note=delta + "\n" + budget_line()),
                 )
                 continue
 
@@ -471,37 +471,45 @@ def run_agent(
 
                 occurrences = cumulative_source.count(old_str) if old_str else 0
                 if occurrences == 0:
-                    messages.append(_tool_result(
-                        tc.id,
-                        "str_replace failed (this did NOT use an edit): old_str not found in the "
-                        "current blueprint source. It must match exactly, whitespace included.",
-                    ))
+                    messages.append(
+                        _tool_result(
+                            tc.id,
+                            "str_replace failed (this did NOT use an edit): old_str not found in the "
+                            "current blueprint source. It must match exactly, whitespace included.",
+                        )
+                    )
                     continue
                 if occurrences > 1:
-                    messages.append(_tool_result(
-                        tc.id,
-                        f"str_replace failed (this did NOT use an edit): old_str matches {occurrences} "
-                        "locations in the current source. Include more surrounding context to make it unique.",
-                    ))
+                    messages.append(
+                        _tool_result(
+                            tc.id,
+                            f"str_replace failed (this did NOT use an edit): old_str matches {occurrences} "
+                            "locations in the current source. Include more surrounding context to make it unique.",
+                        )
+                    )
                     continue
 
                 new_source = cumulative_source.replace(old_str, new_str, 1)
 
                 if not submit:
                     cumulative_source = new_source
-                    messages.append(_tool_result(
-                        tc.id,
-                        "Edit staged (free, not built/rendered yet). Call str_replace with submit=true "
-                        "(or submit_blueprint) when ready to build the accumulated edits.",
-                    ))
+                    messages.append(
+                        _tool_result(
+                            tc.id,
+                            "Edit staged (free, not built/rendered yet). Call str_replace with submit=true "
+                            "(or submit_blueprint) when ready to build the accumulated edits.",
+                        )
+                    )
                     continue
 
                 if builds_done >= config.max_iters:
-                    messages.append(_tool_result(
-                        tc.id,
-                        "Edit budget reached — no edits remaining. Call finish() to export your best "
-                        "build (further build calls are ignored).",
-                    ))
+                    messages.append(
+                        _tool_result(
+                            tc.id,
+                            "Edit budget reached — no edits remaining. Call finish() to export your best "
+                            "build (further build calls are ignored).",
+                        )
+                    )
                     continue
 
                 iteration += 1
@@ -525,8 +533,9 @@ def run_agent(
                 builds_done += 1
                 delta = _grid_delta(best_grid, candidate)
                 cumulative_source = new_source
-                best_grid, best_stats = candidate, report_success(
-                    candidate, iteration, iter_dir, tc, note=delta + "\n" + budget_line()
+                best_grid, best_stats = (
+                    candidate,
+                    report_success(candidate, iteration, iter_dir, tc, note=delta + "\n" + budget_line()),
                 )
                 continue
 

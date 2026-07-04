@@ -114,9 +114,7 @@ def test_set_blocks_respects_transform_stack():
 
 
 def test_weighted_block_only_uses_spec_materials_and_is_deterministic():
-    src = (
-        "fill(0,0,0,7,0,7, weighted_block({'stone': 0.5, 'cobblestone': 0.5}))"
-    )
+    src = "fill(0,0,0,7,0,7, weighted_block({'stone': 0.5, 'cobblestone': 0.5}))"
     g1 = VoxelGrid()
     g2 = VoxelGrid()
     run_blueprint(src, g1, seed=7)

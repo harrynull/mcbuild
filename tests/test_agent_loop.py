@@ -128,9 +128,7 @@ def test_agent_loop_respects_max_iters(tmp_path):
 
 
 def _tool_msg(name, args, call_id="c"):
-    return _FakeMessage(
-        tool_calls=[_ToolCall(id=call_id, function=_FnCall(name=name, arguments=json.dumps(args)))]
-    )
+    return _FakeMessage(tool_calls=[_ToolCall(id=call_id, function=_FnCall(name=name, arguments=json.dumps(args)))])
 
 
 def test_stale_reasoning_stripped_from_all_but_latest_assistant():
@@ -445,9 +443,7 @@ def _session_messages(rundir):
 
 
 def _has_image(content) -> bool:
-    return isinstance(content, list) and any(
-        isinstance(p, dict) and p.get("type") == "image_url" for p in content
-    )
+    return isinstance(content, list) and any(isinstance(p, dict) and p.get("type") == "image_url" for p in content)
 
 
 def test_images_are_never_pruned(tmp_path):
@@ -478,7 +474,8 @@ def test_images_are_never_pruned(tmp_path):
 
     msgs = _session_messages(rundir)
     sheet_msgs = [
-        m for m in msgs
+        m
+        for m in msgs
         if isinstance(m.get("content"), list)
         and any(isinstance(p, dict) and "4 isometric angles" in p.get("text", "") for p in m["content"])
     ]
@@ -486,7 +483,8 @@ def test_images_are_never_pruned(tmp_path):
     assert _has_image(sheet_msgs[-1]["content"])  # latest sheet keeps its image
 
     inspect_msgs = [
-        m for m in msgs
+        m
+        for m in msgs
         if isinstance(m.get("content"), list)
         and any(isinstance(p, dict) and "Inspection view" in p.get("text", "") for p in m["content"])
     ]
@@ -510,7 +508,8 @@ def test_reference_reattached_at_critique(tmp_path):
 
     msgs = _session_messages(rundir)
     critique = [
-        m for m in msgs
+        m
+        for m in msgs
         if isinstance(m.get("content"), list)
         and any(isinstance(p, dict) and "REFERENCE" in p.get("text", "") for p in m["content"])
     ]
@@ -606,9 +605,7 @@ def test_prompt_caching_marks_system_and_latest_user_message():
     out = _with_prompt_caching(messages)
 
     # system prompt: wrapped into a content block with a cache breakpoint
-    assert out[0]["content"] == [
-        {"type": "text", "text": "SYSTEM PROMPT", "cache_control": {"type": "ephemeral"}}
-    ]
+    assert out[0]["content"] == [{"type": "text", "text": "SYSTEM PROMPT", "cache_control": {"type": "ephemeral"}}]
     # first (older) user message is untouched — only the latest user message gets a breakpoint
     assert out[1]["content"] == [{"type": "text", "text": "first"}]
     # latest user message: plain string wrapped + breakpoint

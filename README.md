@@ -167,7 +167,10 @@ src/mcbuild/
 ## Development
 
 ```bash
-uv run pytest
+uv run pytest              # tests
+uv run ruff check .        # lint
+uv run ruff format .       # format
+uv run ty check            # type check
 ```
 
 Tests cover: sandbox security (imports/dunders/budget), DSL shape primitives,
@@ -175,6 +178,8 @@ palette lookup + suggestions, isometric renderer output, sixel encoding,
 Sponge Schematic v2 round-trip via `nbtlib`, and an offline agent-loop
 integration test (scripted LLM: error -> fix -> finish) via the CLI's
 `--fake-llm` path.
+
+CI runs all four (lint, format check, type check, tests) on every push/PR.
 
 ## Notes / limitations
 

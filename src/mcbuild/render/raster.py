@@ -125,11 +125,17 @@ def rasterize(faces: list[DrawFace], view: View, shadows: bool = True) -> Image.
             if light is not None:
                 light_tri = ((lx[a], ly[a], lz[a]), (lx[b], ly[b], lz[b]), (lx[c], ly[c], lz[c]))
             _raster_tri(
-                depth, color,
-                (sx[a], sy[a], vz[a]), (sx[b], sy[b], vz[b]), (sx[c], sy[c], vz[c]),
+                depth,
+                color,
+                (sx[a], sy[a], vz[a]),
+                (sx[b], sy[b], vz[b]),
+                (sx[c], sy[c], vz[c]),
                 (face.uvs[a], face.uvs[b], face.uvs[c]),
-                face.tex, face.color, shade,
-                light_tri, light_depth,
+                face.tex,
+                face.color,
+                shade,
+                light_tri,
+                light_depth,
             )
 
     return Image.fromarray(color, mode="RGBA")

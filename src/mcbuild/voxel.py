@@ -40,9 +40,7 @@ class VoxelGrid:
         if coord not in self._blocks:
             self._check_extent(x, y, z)
             if len(self._blocks) >= MAX_BLOCKS:
-                raise VoxelLimitError(
-                    f"Build exceeds the maximum of {MAX_BLOCKS:,} placed blocks."
-                )
+                raise VoxelLimitError(f"Build exceeds the maximum of {MAX_BLOCKS:,} placed blocks.")
             self._expand_bounds(x, y, z)
         self._blocks[coord] = palette_index
 
@@ -69,9 +67,7 @@ class VoxelGrid:
         candidate_max = (max(self._max[0], x), max(self._max[1], y), max(self._max[2], z))
         for lo, hi in zip(candidate_min, candidate_max, strict=True):
             if hi - lo + 1 > MAX_EXTENT:
-                raise VoxelLimitError(
-                    f"Build exceeds the maximum extent of {MAX_EXTENT} blocks along an axis."
-                )
+                raise VoxelLimitError(f"Build exceeds the maximum extent of {MAX_EXTENT} blocks along an axis.")
 
     def _expand_bounds(self, x: int, y: int, z: int) -> None:
         if self._min is None or self._max is None:

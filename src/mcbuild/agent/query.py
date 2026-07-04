@@ -101,10 +101,7 @@ def ascii_slice(grid: VoxelGrid, axis: str, at: int) -> str:
         rows_out.append("".join(line))
 
     legend = ", ".join(f"{glyphs[n]}={n}" for n in order) or "(no blocks in this slice)"
-    header = (
-        f"slice {axis}={at}  "
-        f"{row_axis[0]}:{r_lo}..{r_hi} (top→bottom)  {col_axis[0]}:{c_lo}..{c_hi} (left→right)"
-    )
+    header = f"slice {axis}={at}  {row_axis[0]}:{r_lo}..{r_hi} (top→bottom)  {col_axis[0]}:{c_lo}..{c_hi} (left→right)"
     if truncated:
         header += (
             f"\n(truncated to the {MAX_SLICE_DIM}x{MAX_SLICE_DIM} window shown; use a region-"
@@ -132,6 +129,7 @@ def material_histogram(grid: VoxelGrid, region=None) -> str:
             x, y, z = c
             return xlo <= x <= xhi and ylo <= y <= yhi and zlo <= z <= zhi
     else:
+
         def inside(c):
             return True
 

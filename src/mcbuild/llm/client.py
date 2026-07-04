@@ -198,9 +198,7 @@ class OpenRouterClient:
     ):
         api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
         if not api_key:
-            raise RuntimeError(
-                "OPENROUTER_API_KEY is not set. Put it in the environment or a .env file."
-            )
+            raise RuntimeError("OPENROUTER_API_KEY is not set. Put it in the environment or a .env file.")
         self._client = OpenAI(api_key=api_key, base_url=base_url)
         self.total_usage = Usage()
         # A stable `user` id, sent with every request in this run, lets OpenRouter route

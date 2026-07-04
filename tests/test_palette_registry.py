@@ -1,4 +1,3 @@
-
 from mcbuild import palette
 from mcbuild.dsl.sandbox import run_blueprint
 from mcbuild.render.iso import render_iso

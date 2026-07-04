@@ -57,7 +57,7 @@ def _build_draw_faces(
         )
 
     draw: list[raster.DrawFace] = []
-    for (cx, cy, cz) in exposed:
+    for cx, cy, cz in exposed:
         idx = grid.get(cx, cy, cz)
         if idx is None:
             continue

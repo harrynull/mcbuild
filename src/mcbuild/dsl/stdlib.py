@@ -80,9 +80,7 @@ class RotateY:
 Transform = Translate | Mirror | RotateY
 
 
-def _iter_box(
-    x1: float, y1: float, z1: float, x2: float, y2: float, z2: float
-) -> Iterator[tuple[int, int, int]]:
+def _iter_box(x1: float, y1: float, z1: float, x2: float, y2: float, z2: float) -> Iterator[tuple[int, int, int]]:
     xlo, xhi = sorted((int(round(x1)), int(round(x2))))
     ylo, yhi = sorted((int(round(y1)), int(round(y2))))
     zlo, zhi = sorted((int(round(z1)), int(round(z2))))
@@ -167,9 +165,7 @@ def make_stdlib(grid: VoxelGrid, seed: int = 0) -> dict[str, object]:
                 _place_block(x, y, z, name)
             elif len(entry) == 3:
                 if block is None:
-                    raise ValueError(
-                        "set_blocks: a (x, y, z) entry needs a default `block=` argument."
-                    )
+                    raise ValueError("set_blocks: a (x, y, z) entry needs a default `block=` argument.")
                 x, y, z = entry
                 _place_block(x, y, z, block)
             else:
@@ -218,20 +214,11 @@ def make_stdlib(grid: VoxelGrid, seed: int = 0) -> dict[str, object]:
         zlo, zhi = sorted((int(round(z1)), int(round(z2))))
         t = max(1, int(thickness))
         for x, y, z in _iter_box(xlo, ylo, zlo, xhi, yhi, zhi):
-            near_edge = (
-                x - xlo < t
-                or xhi - x < t
-                or y - ylo < t
-                or yhi - y < t
-                or z - zlo < t
-                or zhi - z < t
-            )
+            near_edge = x - xlo < t or xhi - x < t or y - ylo < t or yhi - y < t or z - zlo < t or zhi - z < t
             if near_edge:
                 _place_block(x, y, z, block)
 
-    def walls(
-        x1: float, z1: float, x2: float, z2: float, y1: float, y2: float, block, thickness: int = 1
-    ) -> None:
+    def walls(x1: float, z1: float, x2: float, z2: float, y1: float, y2: float, block, thickness: int = 1) -> None:
         xlo, xhi = sorted((int(round(x1)), int(round(x2))))
         zlo, zhi = sorted((int(round(z1)), int(round(z2))))
         ylo, yhi = sorted((int(round(y1)), int(round(y2))))
@@ -406,9 +393,7 @@ def make_stdlib(grid: VoxelGrid, seed: int = 0) -> dict[str, object]:
             if (on_x_edge + on_y_edge + on_z_edge) >= 2:
                 _place_block(x, y, z, block)
 
-    def window_grid(
-        x1, z1, x2, z2, y1, y2, block, spacing: int = 2, margin: int = 1
-    ) -> None:
+    def window_grid(x1, z1, x2, z2, y1, y2, block, spacing: int = 2, margin: int = 1) -> None:
         """Place a regular grid of `block` (e.g. glass) in a vertical wall plane.
 
         The wall must be axis-aligned (x1==x2 for a z-facing wall, or z1==z2 for an

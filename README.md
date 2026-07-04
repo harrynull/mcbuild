@@ -33,6 +33,27 @@ prompt ──▶ LLM writes a blueprint (sandboxed Python DSL)
              └──── loop until finish() ────▶ WorldEdit .schem + full run directory
 ```
 
+## Examples
+
+Unedited iso-view renders from the agent's own run directories under `runs/`:
+
+<table>
+<tr>
+<td align="center" width="33%">
+<img src="docs/images/example-shrine.png" alt="A traditional Japanese shrine with a torii gate"><br>
+<sub><code>"a traditional japanese shrine with a torii gate"</code></sub>
+</td>
+<td align="center" width="33%">
+<img src="docs/images/example-castle.png" alt="A medieval castle"><br>
+<sub><code>"a medival castle"</code></sub>
+</td>
+<td align="center" width="33%">
+<img src="docs/images/example-oasis.png" alt="A small lake in a desert"><br>
+<sub><code>"a small lake in a desert"</code></sub>
+</td>
+</tr>
+</table>
+
 ## Install
 
 ```bash

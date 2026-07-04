@@ -191,6 +191,14 @@ integration test (scripted LLM: error -> fix -> finish) via the CLI's
 - Iteration diffs (blocks added/removed vs. the previous iteration) and richer stats
   (per-storey counts, interior air volume, mirror-symmetry score).
 
+## Acknowledgments
+
+This project was inspired by [*APT: Architectural Planning and Text-to-Blueprint
+Construction Using Large Language Models for Open-World Agents*](https://arxiv.org/pdf/2411.17255)
+(Chen & Gao, 2024), which explores LLM-driven blueprint construction for
+Minecraft agents. mcbuild is an independent, from-scratch implementation and
+is not affiliated with or derived from that paper's code.
+
 ## AI disclosure
 
 This project was built with significant AI assistance (Claude): most of the

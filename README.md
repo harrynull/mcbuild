@@ -9,6 +9,7 @@ calls — until it produces a WorldEdit-ready `.schem` file.
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
 ![uv](https://img.shields.io/badge/managed%20with-uv-de5fe9)
 ![OpenRouter](https://img.shields.io/badge/LLM-OpenRouter-8a2be2)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ![Multi-view isometric render of an agent-built mansion](docs/images/mansion-hero.png)
 
@@ -168,3 +169,15 @@ integration test (scripted LLM: error -> fix -> finish) via the CLI's
 - A structured plan/component-registry tool and gating `finish()` on a verification checklist.
 - Iteration diffs (blocks added/removed vs. the previous iteration) and richer stats
   (per-storey counts, interior air volume, mirror-symmetry score).
+
+## AI disclosure
+
+This project was built with significant AI assistance (Claude): most of the
+codebase, this README, and much of the iterative design work were written or
+co-written by an LLM agent under human direction and review. The renders
+throughout this README are unedited output from the agent described above,
+not hand-picked or touched-up examples.
+
+## License
+
+[MIT](LICENSE)

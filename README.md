@@ -106,8 +106,9 @@ src/mcbuild/
 
 ## Capabilities
 
-- **Incremental editing**: `submit_blueprint` (full rebuild), `patch_blueprint` (delta against
-  the current build), `edit_region` (rebuild one bounding box, freeze the rest).
+- **Incremental editing**: `submit_blueprint` (full rebuild), `str_replace` (find/replace against
+  the accumulated blueprint source, then rerun it whole), `edit_region` (rebuild one bounding box,
+  freeze the rest).
 - **Bulk + detail primitives**: `set_blocks`, `weighted_block`, `scatter`, `frame`, `window_grid`.
 - **Block states**: `"oak_stairs[facing=north,half=top]"` etc. render with true geometry (stairs,
   slabs, walls, fences, fence gates, trapdoors, doors, panes) and export with the state suffix.

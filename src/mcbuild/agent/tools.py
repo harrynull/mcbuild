@@ -1,6 +1,6 @@
 """OpenAI-style tool schemas for the agent loop.
 
-submit_blueprint / patch_blueprint / edit_region / inspect / finish.
+submit_blueprint / str_replace / edit_region / inspect / finish.
 """
 
 SUBMIT_BLUEPRINT_TOOL = {
@@ -11,7 +11,7 @@ SUBMIT_BLUEPRINT_TOOL = {
             "Validate, execute, and render a COMPLETE blueprint program, built from scratch "
             "into an empty world (it replaces any previous build). Use this to start over or "
             "make structural changes to the overall shape/footprint. For small incremental "
-            "tweaks to an existing build, prefer patch_blueprint or edit_region. On error you "
+            "tweaks to an existing build, prefer str_replace or edit_region. On error you "
             "get a line-mapped traceback to fix. On success you get build stats and, in a "
             "follow-up message, a labeled multi-view contact-sheet render to critique."
         ),
@@ -29,27 +29,36 @@ SUBMIT_BLUEPRINT_TOOL = {
     },
 }
 
-PATCH_BLUEPRINT_TOOL = {
+STR_REPLACE_TOOL = {
     "type": "function",
     "function": {
-        "name": "patch_blueprint",
+        "name": "str_replace",
         "description": (
-            "Incrementally edit the CURRENT build without rewriting it. This code runs against "
-            "the EXISTING voxel state (not a fresh world), so you write only the delta — add a "
-            "detail, fix a section, clear() a wall for a window, place 'air' to carve. Two "
-            "things do NOT carry over between calls: transform contexts (with translate/mirror/"
-            "rotate_y are fresh each call) and Python variables/functions you defined earlier "
-            "(gone — talk to the grid only through primitives). On error the pre-patch build is "
-            "left untouched and you get a line-mapped traceback. On success you get updated "
-            "stats and a fresh contact-sheet render. Requires a prior successful submit_blueprint."
+            "Incrementally edit the CURRENT build by find-and-replacing text in its accumulated "
+            "blueprint source, like a coding agent's file-editing tool. `old_str` must match "
+            "EXACTLY ONE location in the current source (whitespace and all) — include enough "
+            "surrounding context (a few lines) to make the match unique; if it matches zero or "
+            "multiple times you get an error and nothing changes. `new_str` replaces that match. "
+            "The FULL resulting source is then re-run from scratch, so — unlike a raw code "
+            "delta — variables, helper functions, and transform contexts you defined elsewhere in "
+            "the source stay intact. On error the pre-edit build is left untouched and you get a "
+            "line-mapped traceback against the patched source. On success you get updated stats "
+            "and a fresh contact-sheet render. Requires a prior successful submit_blueprint."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "code": {"type": "string", "description": "The incremental blueprint snippet to run against the current build."},
-                "design_notes": {"type": "string", "description": "Brief notes on what this patch changes."},
+                "old_str": {
+                    "type": "string",
+                    "description": "Exact text to find in the current blueprint source; must be unique.",
+                },
+                "new_str": {
+                    "type": "string",
+                    "description": "Text to replace old_str with.",
+                },
+                "design_notes": {"type": "string", "description": "Brief notes on what this edit changes."},
             },
-            "required": ["code", "design_notes"],
+            "required": ["old_str", "new_str", "design_notes"],
         },
     },
 }
@@ -62,9 +71,9 @@ EDIT_REGION_TOOL = {
             "Rebuild one bounding-box region while freezing the rest of the build. The given "
             "region is cleared first, then your code runs against the current (post-clear) voxel "
             "state — so you can redo just the roof or one wing without risking regressions "
-            "elsewhere. Same rules as patch_blueprint: fresh transform stack, no persisted "
-            "variables, pre-edit build untouched on error. Requires a prior successful "
-            "submit_blueprint."
+            "elsewhere. Your code runs against the EXISTING (post-clear) voxel state (not a "
+            "fresh world): fresh transform stack each call, no persisted variables, pre-edit "
+            "build untouched on error. Requires a prior successful submit_blueprint."
         ),
         "parameters": {
             "type": "object",
@@ -197,7 +206,7 @@ FINISH_TOOL = {
 
 ALL_TOOLS = [
     SUBMIT_BLUEPRINT_TOOL,
-    PATCH_BLUEPRINT_TOOL,
+    STR_REPLACE_TOOL,
     EDIT_REGION_TOOL,
     INSPECT_TOOL,
     QUERY_TOOL,

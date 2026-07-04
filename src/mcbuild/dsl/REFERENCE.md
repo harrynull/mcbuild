@@ -38,13 +38,23 @@ a hillside).
 
 ## Patching an existing build
 
-When refining a build you already submitted (via the `patch_blueprint` or `edit_region` tools),
-your code runs against the CURRENT voxel state, not a fresh world — write only the delta (e.g.
-`clear(...)` a wall, `fill(...)` a new room, place `'air'` to carve). Two things do NOT carry
-over between calls: transform contexts (`with translate/mirror/rotate_y` are fresh each call) and
-any Python variables or functions you defined earlier (gone — talk to the grid only through
-primitives). `edit_region` additionally clears its bounding box before your snippet runs, so you
-can redo one region without disturbing the rest.
+When refining a build you already submitted, you have two incremental tools:
+
+`str_replace` finds an exact, unique snippet of text in the blueprint source you've accumulated
+so far and replaces it, then reruns the WHOLE patched source from scratch against an empty world.
+Because it's the same one program, variables, helper functions, and transform contexts defined
+elsewhere in the source stay intact — there is no persistence gap to worry about. Use it for
+surgical fixes: change one `fill(...)` call's material, insert a line after an existing one, tweak
+a coordinate. `old_str` must match exactly (whitespace included) and only once; if it matches zero
+or multiple times, nothing changes and you get an error to retry with more context.
+
+`edit_region([x1,y1,z1,x2,y2,z2], ...)` clears one bounding box and then runs a fresh code snippet
+against the CURRENT (post-clear) voxel state, not a fresh world — write only what should appear in
+that region (e.g. `fill(...)` a new room, place `'air'` to carve). Two things do NOT carry over
+into that snippet: transform contexts (`with translate/mirror/rotate_y` are fresh each call) and
+any Python variables or functions defined elsewhere (gone — talk to the grid only through
+primitives). Use this for a wholesale redo of one region (e.g. the roof or one wing) without
+disturbing the rest.
 
 ## Primitives
 

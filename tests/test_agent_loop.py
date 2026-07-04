@@ -164,6 +164,14 @@ def test_success_result_includes_bounds_and_budget(tmp_path):
     assert "Edits remaining:" in texts
 
 
+def _str_replace(old_str, new_str, notes="x"):
+    return _tool_msg("str_replace", {"old_str": old_str, "new_str": new_str, "design_notes": notes})
+
+
+# the source _fixed_submit hands to submit_blueprint (used as the old_str anchor below)
+_FIXED_SUBMIT_CODE = "walls(0, 0, 4, 4, 0, 2, 'stone')\nfloor(0, 0, 4, 4, 0, 'stone')\nclear(2, 1, 0, 2, 2, 0)"
+
+
 def test_budget_caps_successful_builds(tmp_path):
     class SpendyLLM(FakeLLM):
         def __init__(self):
@@ -176,7 +184,7 @@ def test_budget_caps_successful_builds(tmp_path):
             ]
 
         def _patch(self):
-            return _tool_msg("patch_blueprint", {"code": "set_block(0, 4, 0, 'glass')", "design_notes": "x"})
+            return _str_replace("clear(2, 1, 0, 2, 2, 0)", "clear(2, 1, 0, 2, 2, 0)\nset_block(0, 4, 0, 'glass')")
 
         def _finish_ok(self):
             return _finish_msg()
@@ -197,7 +205,7 @@ def test_failed_build_does_not_consume_budget(tmp_path):
             self._script = [self._broken_submit, self._fixed_submit, self._patch, self._finish_ok]
 
         def _patch(self):
-            return _tool_msg("patch_blueprint", {"code": "set_block(0, 4, 0, 'glass')", "design_notes": "x"})
+            return _str_replace("clear(2, 1, 0, 2, 2, 0)", "clear(2, 1, 0, 2, 2, 0)\nset_block(0, 4, 0, 'glass')")
 
         def _finish_ok(self):
             return _finish_msg()
@@ -213,14 +221,18 @@ def test_failed_build_does_not_consume_budget(tmp_path):
     assert not any("Edit budget reached" in t for t in texts)
 
 
-def test_patch_result_reports_block_delta(tmp_path):
+def test_str_replace_result_reports_block_delta(tmp_path):
     class DeltaLLM(FakeLLM):
         def __init__(self):
             super().__init__()
             self._script = [self._fixed_submit, self._patch, self._finish_ok]
 
         def _patch(self):
-            return _tool_msg("patch_blueprint", {"code": "fill(0, 5, 0, 3, 5, 3, 'glass')", "design_notes": "roof"})
+            return _str_replace(
+                "clear(2, 1, 0, 2, 2, 0)",
+                "clear(2, 1, 0, 2, 2, 0)\nfill(0, 5, 0, 3, 5, 3, 'glass')",
+                notes="roof",
+            )
 
         def _finish_ok(self):
             return _finish_msg()
@@ -232,7 +244,7 @@ def test_patch_result_reports_block_delta(tmp_path):
     assert any("delta: +16 added" in t for t in _tool_texts(rundir))
 
 
-def test_noop_patch_delta_flags_no_change(tmp_path):
+def test_noop_str_replace_delta_flags_no_change(tmp_path):
     class NoopLLM(FakeLLM):
         def __init__(self):
             super().__init__()
@@ -240,7 +252,11 @@ def test_noop_patch_delta_flags_no_change(tmp_path):
 
         def _patch(self):
             # clear a region with nothing in it -> no change
-            return _tool_msg("patch_blueprint", {"code": "clear(50, 50, 50, 52, 52, 52)", "design_notes": "noop"})
+            return _str_replace(
+                "clear(2, 1, 0, 2, 2, 0)",
+                "clear(2, 1, 0, 2, 2, 0)\nclear(50, 50, 50, 52, 52, 52)",
+                notes="noop",
+            )
 
         def _finish_ok(self):
             return _finish_msg()
@@ -252,56 +268,92 @@ def test_noop_patch_delta_flags_no_change(tmp_path):
     assert any("NO CHANGE" in t for t in _tool_texts(rundir))
 
 
-def test_patch_blueprint_appends_to_cumulative_source(tmp_path):
-    class PatchingFakeLLM(FakeLLM):
+def test_str_replace_edits_cumulative_source(tmp_path):
+    class ReplacingFakeLLM(FakeLLM):
         def __init__(self):
             super().__init__()
             self._script = [self._design_brief, self._fixed_submit, self._patch, self._finish]
 
         def _patch(self):
             # cut a window into the existing wall
-            return _tool_msg("patch_blueprint", {"code": "set_block(2, 2, 4, 'air')", "design_notes": "window"})
+            return _str_replace("clear(2, 1, 0, 2, 2, 0)", "clear(2, 1, 0, 2, 2, 0)\nset_block(2, 2, 4, 'air')", notes="window")
 
-    llm = PatchingFakeLLM()
+    llm = ReplacingFakeLLM()
     config = Config(max_iters=6, seed=1)
     rundir = RunDir.create("a tiny stone hut", base=str(tmp_path))
     result = run_agent("a tiny stone hut", llm, config, rundir)
 
     assert result.finished is True
-    # iter_01 = successful submit, iter_02 = patch
+    # iter_01 = successful submit, iter_02 = str_replace
     iter2_bp = (rundir.root / "iter_02" / "blueprint.py").read_text()
     assert "walls(" in iter2_bp  # original submit code preserved
-    assert "set_block(2, 2, 4, 'air')" in iter2_bp  # patch appended
-    assert (rundir.root / "iter_02" / "patch.py").exists()
-    assert not (rundir.root / "iter_01" / "patch.py").exists()  # submit iters have no patch.py
+    assert "set_block(2, 2, 4, 'air')" in iter2_bp  # replacement present
+    assert not (rundir.root / "iter_02" / "patch.py").exists()  # str_replace has no patch.py, only edit_region does
 
 
-def test_patch_before_any_submit_returns_error(tmp_path):
-    class EarlyPatchLLM(FakeLLM):
+def test_str_replace_old_str_not_found_returns_error(tmp_path):
+    class BadAnchorLLM(FakeLLM):
+        def __init__(self):
+            super().__init__()
+            self._script = [self._design_brief, self._fixed_submit, self._patch, self._finish]
+
+        def _patch(self):
+            return _str_replace("this text does not exist in the source", "irrelevant")
+
+    llm = BadAnchorLLM()
+    config = Config(max_iters=6, seed=1)
+    rundir = RunDir.create("a tiny stone hut", base=str(tmp_path))
+    result = run_agent("a tiny stone hut", llm, config, rundir)
+
+    assert result.finished is True
+    assert any("old_str not found" in t for t in _tool_texts(rundir))
+
+
+def test_str_replace_old_str_not_unique_returns_error(tmp_path):
+    class AmbiguousAnchorLLM(FakeLLM):
+        def __init__(self):
+            super().__init__()
+            self._script = [self._design_brief, self._fixed_submit, self._patch, self._finish]
+
+        def _patch(self):
+            # "stone'" appears twice in _FIXED_SUBMIT_CODE (walls + floor)
+            return _str_replace("'stone'", "'stone_bricks'")
+
+    llm = AmbiguousAnchorLLM()
+    config = Config(max_iters=6, seed=1)
+    rundir = RunDir.create("a tiny stone hut", base=str(tmp_path))
+    result = run_agent("a tiny stone hut", llm, config, rundir)
+
+    assert result.finished is True
+    assert any("matches 2 locations" in t for t in _tool_texts(rundir))
+
+
+def test_str_replace_before_any_submit_returns_error(tmp_path):
+    class EarlyReplaceLLM(FakeLLM):
         def __init__(self):
             super().__init__()
             self._script = [self._patch_first, self._finish]
 
         def _patch_first(self):
-            return _tool_msg("patch_blueprint", {"code": "fill(0,0,0,1,1,1,'stone')", "design_notes": "x"})
+            return _str_replace("fill(0,0,0,1,1,1,'stone')", "fill(0,0,0,1,1,1,'stone_bricks')")
 
-    llm = EarlyPatchLLM()
+    llm = EarlyReplaceLLM()
     config = Config(max_iters=6, seed=1)
     rundir = RunDir.create("x", base=str(tmp_path))
     result = run_agent("x", llm, config, rundir)
     assert result.grid is None  # nothing was ever built
 
 
-def test_failing_patch_leaves_best_grid_untouched(tmp_path):
-    class BadPatchLLM(FakeLLM):
+def test_failing_str_replace_leaves_best_grid_untouched(tmp_path):
+    class BadReplaceLLM(FakeLLM):
         def __init__(self):
             super().__init__()
             self._script = [self._design_brief, self._fixed_submit, self._bad_patch, self._finish]
 
         def _bad_patch(self):
-            return _tool_msg("patch_blueprint", {"code": "set_block(0,0,0,'not_a_real_block')", "design_notes": "x"})
+            return _str_replace("clear(2, 1, 0, 2, 2, 0)", "set_block(0,0,0,'not_a_real_block')")
 
-    llm = BadPatchLLM()
+    llm = BadReplaceLLM()
     config = Config(max_iters=6, seed=1)
     rundir = RunDir.create("a tiny stone hut", base=str(tmp_path))
     result = run_agent("a tiny stone hut", llm, config, rundir)

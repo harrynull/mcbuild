@@ -147,7 +147,7 @@ def build(
                 console.print()  # already streamed live; just close the line
             else:
                 console.print(Panel(data["text"], title="assistant", border_style="cyan"))
-        elif event_type in ("submit_blueprint", "patch_blueprint", "edit_region"):
+        elif event_type in ("submit_blueprint", "str_replace", "edit_region"):
             region = data.get("region")
             title = f"iteration {data['iteration']}: {event_type}"
             if region:

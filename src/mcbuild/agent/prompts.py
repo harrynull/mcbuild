@@ -26,12 +26,15 @@ screenshots of the result so you can critique and refine your own work.
 2. Call `submit_blueprint` with a complete, self-contained blueprint that builds the whole \
    structure from (0, 0, 0) outward. `submit_blueprint` rebuilds from scratch (empty world) — \
    use it to start over or change the overall shape/footprint. Once you have a working base, \
-   prefer incremental edits: `patch_blueprint` runs a small delta against the CURRENT build \
-   (add a detail, fix a section, place `'air'` to carve), and `edit_region([x1,y1,z1,x2,y2,z2], \
-   ...)` clears one bounding box and rebuilds just that region while freezing the rest — this is \
-   the safe way to fix the roof without accidentally simplifying detail elsewhere. Incremental \
-   edits share the persisted voxel grid but NOT Python variables or transform contexts between \
-   calls, so write self-contained snippets that talk to the grid through primitives.
+   prefer incremental edits: `str_replace(old_str, new_str, ...)` finds an EXACT, unique snippet \
+   in the blueprint source you've built up so far and replaces it, then reruns the WHOLE patched \
+   source from scratch — so variables, helper functions, and transform contexts you defined \
+   elsewhere in the source stay intact, unlike a raw delta. Use it for surgical fixes (change one \
+   `fill(...)` call, tweak a material, insert a new line after an existing one). `edit_region(\
+   [x1,y1,z1,x2,y2,z2], ...)` clears one bounding box and reruns a fresh code snippet against the \
+   current voxel state just for that region while freezing the rest — good for a wholesale redo of \
+   one wing or the roof; note that snippet does NOT see variables/transform contexts from the rest \
+   of the build.
 3. If it fails, the tool result gives you a line-mapped traceback with a code excerpt. Fix the \
    bug and resubmit.
 4. If it succeeds, you'll receive build stats, then a follow-up message with a labeled \
@@ -49,11 +52,11 @@ screenshots of the result so you can critique and refine your own work.
    2, -5], look_at=[x, 1, 0] to study a door). `query` returns lossless TEXT — the exact block at \
    a coordinate, an ASCII floor plan of a storey, or a material histogram — more reliable than a \
    small render for verifying placement and interiors. Verify, then patch precisely.
-6. Revise with `patch_blueprint`/`edit_region` (incremental) or another `submit_blueprint` \
+6. Revise with `str_replace`/`edit_region` (incremental) or another `submit_blueprint` \
    (structural redo), or call `finish` once you're satisfied.
 
 You have a limited EDIT BUDGET (a fixed number of successful builds). Every successful \
-submit_blueprint / patch_blueprint / edit_region uses one; failed attempts and inspect/query do \
+submit_blueprint / str_replace / edit_region uses one; failed attempts and inspect/query do \
 NOT. Each build result tells you how many edits remain — plan so you don't get cut off mid-detail: \
 spend early edits on structure, later ones on detail, and don't waste an edit on a change you \
 could have verified first with a free inspect/query. Coordinates can be negative (roof overhangs, \
@@ -111,7 +114,7 @@ def build_reference_critique_nudge() -> str:
         "Above are the concept REFERENCE and YOUR CURRENT BUILD (4 iso angles + top-down + 2 "
         "cutaways), with stats. Compare them side by side and list the 3 BIGGEST discrepancies in "
         "massing, roof shape, palette, and opening rhythm — be specific about where. Then fix the "
-        "largest discrepancy (patch_blueprint/edit_region, using the bounds in the stats for "
+        "largest discrepancy (str_replace/edit_region, using the bounds in the stats for "
         "coordinates). Verify with a free inspect/query if unsure. Call finish only when the build "
         "clearly reads as the same building as the reference."
     )

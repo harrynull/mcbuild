@@ -323,7 +323,7 @@ def run_agent(
                 nudge = "Please proceed: call submit_blueprint with your design."
             else:
                 nudge = (
-                    "Please proceed: refine with patch_blueprint or edit_region, verify with "
+                    "Please proceed: refine with str_replace or edit_region, verify with "
                     "inspect/query (free), or call finish() if the build is done."
                 )
             messages.append({"role": "user", "content": nudge})
@@ -385,7 +385,7 @@ def run_agent(
                 best_grid, best_stats = grid, report_success(grid, iteration, iter_dir, tc, note=budget_line())
                 continue
 
-            if name in ("patch_blueprint", "edit_region"):
+            if name == "edit_region":
                 if best_grid is None:
                     messages.append(
                         _tool_result(tc.id, f"No build exists yet; call submit_blueprint before {name}.")
@@ -402,14 +402,14 @@ def run_agent(
                 iteration += 1
                 code = args.get("code", "")
                 design_notes = args.get("design_notes", "")
-                region = args.get("region") if name == "edit_region" else None
+                region = args.get("region")
                 iter_dir = rundir.iter_dir(iteration)
                 (iter_dir / "patch.py").write_text(code, encoding="utf-8")
                 emit(name, iteration=iteration, design_notes=design_notes, code=code, region=region)
 
                 # Run against a CLONE so a failing patch never corrupts the current build.
                 candidate = best_grid.clone()
-                if name == "edit_region" and region is not None:
+                if region is not None:
                     _clear_region(candidate, region)
                 try:
                     sandbox.run_blueprint(code, candidate, seed=config.seed)
@@ -428,6 +428,67 @@ def run_agent(
                 header = f"\n\n# --- {name}" + (f" region={region}" if region else "") + " ---\n"
                 cumulative_source = cumulative_source + header + code
                 (iter_dir / "blueprint.py").write_text(cumulative_source, encoding="utf-8")
+                best_grid, best_stats = candidate, report_success(
+                    candidate, iteration, iter_dir, tc, note=delta + "\n" + budget_line()
+                )
+                continue
+
+            if name == "str_replace":
+                if best_grid is None:
+                    messages.append(
+                        _tool_result(tc.id, "No build exists yet; call submit_blueprint before str_replace.")
+                    )
+                    continue
+                if builds_done >= config.max_iters:
+                    messages.append(_tool_result(
+                        tc.id,
+                        "Edit budget reached — no edits remaining. Call finish() to export your best "
+                        "build (further build calls are ignored).",
+                    ))
+                    continue
+
+                old_str = args.get("old_str", "")
+                new_str = args.get("new_str", "")
+                design_notes = args.get("design_notes", "")
+
+                occurrences = cumulative_source.count(old_str) if old_str else 0
+                if occurrences == 0:
+                    messages.append(_tool_result(
+                        tc.id,
+                        "str_replace failed (this did NOT use an edit): old_str not found in the "
+                        "current blueprint source. It must match exactly, whitespace included.",
+                    ))
+                    continue
+                if occurrences > 1:
+                    messages.append(_tool_result(
+                        tc.id,
+                        f"str_replace failed (this did NOT use an edit): old_str matches {occurrences} "
+                        "locations in the current source. Include more surrounding context to make it unique.",
+                    ))
+                    continue
+
+                iteration += 1
+                new_source = cumulative_source.replace(old_str, new_str, 1)
+                iter_dir = rundir.iter_dir(iteration)
+                (iter_dir / "blueprint.py").write_text(new_source, encoding="utf-8")
+                emit("str_replace", iteration=iteration, design_notes=design_notes, code=new_source)
+
+                candidate = VoxelGrid()
+                try:
+                    sandbox.run_blueprint(new_source, candidate, seed=config.seed)
+                except BlueprintError as e:
+                    consecutive_failures += 1
+                    emit("blueprint_error", iteration=iteration, error=str(e))
+                    messages.append(_tool_result(tc.id, f"str_replace failed (this did NOT use an edit):\n{e}"))
+                    if consecutive_failures >= config.max_consecutive_failures:
+                        emit("abort", reason="too many consecutive blueprint failures")
+                        return finalize(False, "Aborted after repeated blueprint failures.")
+                    continue
+
+                consecutive_failures = 0
+                builds_done += 1
+                delta = _grid_delta(best_grid, candidate)
+                cumulative_source = new_source
                 best_grid, best_stats = candidate, report_success(
                     candidate, iteration, iter_dir, tc, note=delta + "\n" + budget_line()
                 )

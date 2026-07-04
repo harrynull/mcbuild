@@ -322,6 +322,8 @@ def run_agent(
             prompt_tokens=result.usage.prompt_tokens,
             completion_tokens=result.usage.completion_tokens,
             reasoning_tokens=result.usage.reasoning_tokens,
+            cached_tokens=result.usage.cached_tokens,
+            cache_rate=result.usage.cache_rate,
             cost_usd=result.usage.cost_usd,
             cumulative_cost_usd=llm.total_usage.cost_usd,
         )

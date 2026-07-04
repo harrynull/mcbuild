@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from mcbuild.llm.client import consume_stream
+from mcbuild.llm.client import OpenRouterClient, Usage, consume_stream
 
 
 def _chunk(content=None, reasoning=None, reasoning_details=None, tool_calls=None, usage=None):
@@ -101,3 +101,63 @@ def test_consume_stream_empty_yields_none_content_and_tool_calls():
     assert message.reasoning is None
     assert message.tool_calls is None
     assert usage is None
+
+
+def test_usage_cache_rate_is_fraction_of_cached_prompt_tokens():
+    assert Usage(prompt_tokens=100, cached_tokens=25).cache_rate == 0.25
+    assert Usage(prompt_tokens=0, cached_tokens=0).cache_rate == 0.0  # no div-by-zero on an empty turn
+
+
+def test_usage_add_accumulates_cached_tokens():
+    total = Usage()
+    total.add(Usage(prompt_tokens=100, cached_tokens=80, cost_usd=0.01))
+    total.add(Usage(prompt_tokens=50, cached_tokens=50, cost_usd=0.001))
+    assert total.prompt_tokens == 150
+    assert total.cached_tokens == 130
+    assert total.cache_rate == 130 / 150
+
+
+def test_client_session_id_defaults_to_a_generated_value_and_can_be_pinned():
+    a = OpenRouterClient(api_key="test-key")
+    b = OpenRouterClient(api_key="test-key")
+    assert a.session_id and isinstance(a.session_id, str)
+    assert a.session_id != b.session_id  # auto-generated ids don't collide
+
+    pinned = OpenRouterClient(api_key="test-key", session_id="resume-me")
+    assert pinned.session_id == "resume-me"
+
+
+def test_usage_from_obj_parses_cached_tokens_for_cache_rate_reporting():
+    client = OpenRouterClient(api_key="test-key")
+    usage_obj = SimpleNamespace(
+        prompt_tokens=1000,
+        completion_tokens=50,
+        cost=0.02,
+        prompt_tokens_details=SimpleNamespace(cached_tokens=900),
+    )
+    usage = client._usage_from_obj(usage_obj)
+    assert usage.cached_tokens == 900
+    assert usage.cache_rate == 0.9
+
+
+def test_usage_from_obj_defaults_cached_tokens_to_zero_when_absent():
+    client = OpenRouterClient(api_key="test-key")
+    usage_obj = SimpleNamespace(prompt_tokens=100, completion_tokens=10, cost=0.0)
+    usage = client._usage_from_obj(usage_obj)
+    assert usage.cached_tokens == 0
+    assert usage.cache_rate == 0.0
+
+
+def test_chat_blocking_sends_session_id_as_user_for_sticky_routing():
+    client = OpenRouterClient(api_key="test-key", session_id="sticky-123")
+    captured = {}
+
+    def fake_create(**kwargs):
+        captured.update(kwargs)
+        message = SimpleNamespace(content="hi", tool_calls=None, reasoning=None, reasoning_details=None)
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=None)
+
+    client._client.chat.completions.create = fake_create
+    client.chat(model="anthropic/claude-sonnet-5", messages=[{"role": "user", "content": "hi"}])
+
+    assert captured["user"] == "sticky-123"

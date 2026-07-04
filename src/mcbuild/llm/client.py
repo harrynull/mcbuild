@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import os
 import time
+import uuid
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from io import BytesIO
@@ -24,12 +25,19 @@ class Usage:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     reasoning_tokens: int = 0
+    cached_tokens: int = 0
     cost_usd: float = 0.0
+
+    @property
+    def cache_rate(self) -> float:
+        """Fraction of prompt_tokens served from cache (0.0-1.0), or 0.0 if none/unknown."""
+        return self.cached_tokens / self.prompt_tokens if self.prompt_tokens else 0.0
 
     def add(self, other: "Usage") -> None:
         self.prompt_tokens += other.prompt_tokens
         self.completion_tokens += other.completion_tokens
         self.reasoning_tokens += other.reasoning_tokens
+        self.cached_tokens += other.cached_tokens
         self.cost_usd += other.cost_usd
 
 
@@ -181,7 +189,12 @@ def _is_retryable(exc: Exception) -> bool:
 class OpenRouterClient:
     """Thin wrapper over the OpenAI SDK pointed at OpenRouter."""
 
-    def __init__(self, api_key: str | None = None, base_url: str = DEFAULT_BASE_URL):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str = DEFAULT_BASE_URL,
+        session_id: str | None = None,
+    ):
         api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
         if not api_key:
             raise RuntimeError(
@@ -189,6 +202,10 @@ class OpenRouterClient:
             )
         self._client = OpenAI(api_key=api_key, base_url=base_url)
         self.total_usage = Usage()
+        # A stable `user` id, sent with every request in this run, lets OpenRouter route
+        # repeat calls to the same upstream/provider instance — without it, requests can
+        # bounce between backends and lose the prompt-cache hits _with_prompt_caching relies on.
+        self.session_id = session_id or uuid.uuid4().hex
 
     def chat(
         self,
@@ -211,11 +228,13 @@ class OpenRouterClient:
         return extra_body
 
     def _usage_from_obj(self, usage_obj: object | None) -> Usage:
-        details = getattr(usage_obj, "completion_tokens_details", None)
+        completion_details = getattr(usage_obj, "completion_tokens_details", None)
+        prompt_details = getattr(usage_obj, "prompt_tokens_details", None)
         return Usage(
             prompt_tokens=getattr(usage_obj, "prompt_tokens", 0) or 0,
             completion_tokens=getattr(usage_obj, "completion_tokens", 0) or 0,
-            reasoning_tokens=getattr(details, "reasoning_tokens", 0) or 0,
+            reasoning_tokens=getattr(completion_details, "reasoning_tokens", 0) or 0,
+            cached_tokens=getattr(prompt_details, "cached_tokens", 0) or 0,
             cost_usd=getattr(usage_obj, "cost", 0.0) or 0.0,
         )
 
@@ -232,6 +251,7 @@ class OpenRouterClient:
                     model=model,
                     messages=messages,
                     tools=tools,
+                    user=self.session_id,
                     extra_body=extra_body,
                 )
                 break
@@ -264,6 +284,7 @@ class OpenRouterClient:
                     model=model,
                     messages=messages,
                     tools=tools,
+                    user=self.session_id,
                     extra_body=extra_body,
                     stream=True,
                     stream_options={"include_usage": True},
@@ -286,6 +307,7 @@ class OpenRouterClient:
             resp = self._client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
+                user=self.session_id,
                 extra_body={"modalities": ["image", "text"]},
             )
             choice = resp.choices[0]

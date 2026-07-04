@@ -80,6 +80,15 @@ def build(
     cost_ceiling: float | None = typer.Option(
         None, "--cost-ceiling", help="Abort (keeping the best build so far) once usage cost reaches this many USD."
     ),
+    session_id: str | None = typer.Option(
+        None,
+        "--session-id",
+        help=(
+            "Pin OpenRouter's `user` field to this value for sticky routing (keeps every "
+            "request in this run on the same upstream, which prompt caching relies on). "
+            "Defaults to a random id per run; pass an existing one to keep re-using its cache."
+        ),
+    ),
     fake_llm: bool = typer.Option(
         False, "--fake-llm", hidden=True, help="Use a scripted offline LLM (no network) for demos/tests."
     ),
@@ -101,16 +110,18 @@ def build(
     )
 
     rundir = RunDir.create(prompt, base=out)
-    console.print(Panel(f"[bold]{prompt}[/bold]\nrun dir: {rundir.root}", title="mcbuild"))
 
     if fake_llm:
         llm: object = FakeLLM()
     else:
         try:
-            llm = OpenRouterClient()
+            llm = OpenRouterClient(session_id=session_id)
         except RuntimeError as e:
             console.print(f"[red]{e}[/red]")
             raise typer.Exit(1) from e
+
+    session_line = f"\nsession: {llm.session_id}" if hasattr(llm, "session_id") else ""
+    console.print(Panel(f"[bold]{prompt}[/bold]\nrun dir: {rundir.root}{session_line}", title="mcbuild"))
 
     reference_image = None
     if reference and not fake_llm:
@@ -202,8 +213,9 @@ def build(
                 stream_state["content_live"] = None
             console.print(Panel(data["text"], title="assistant", border_style="cyan"))
         elif event_type == "turn_usage":
+            cache_note = f" (cache {data['cache_rate']:.0%})" if data.get("cached_tokens") else ""
             console.print(
-                f"[dim]turn {data['turn']}: {_fmt_tokens(data['prompt_tokens'])} in / "
+                f"[dim]turn {data['turn']}: {_fmt_tokens(data['prompt_tokens'])} in{cache_note} / "
                 f"{_fmt_tokens(data['completion_tokens'])} out / "
                 f"{_fmt_tokens(data['reasoning_tokens'])} reasoning / "
                 f"${data['cost_usd']:.2f}, cumulative ${data['cumulative_cost_usd']:.2f}[/dim]"
@@ -254,10 +266,11 @@ def build(
 
     usage = llm.total_usage
     reasoning_line = f"  reasoning tokens: {usage.reasoning_tokens}" if usage.reasoning_tokens else ""
+    cache_line = f"  cache rate: {usage.cache_rate:.0%}" if usage.cached_tokens else ""
     console.print(
         Panel(
             f"iterations: {result.iterations}\n"
-            f"prompt tokens: {usage.prompt_tokens}  completion tokens: {usage.completion_tokens}{reasoning_line}\n"
+            f"prompt tokens: {usage.prompt_tokens}  completion tokens: {usage.completion_tokens}{reasoning_line}{cache_line}\n"
             f"cost: ${usage.cost_usd:.4f}",
             title="usage",
             border_style="magenta",

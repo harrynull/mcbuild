@@ -641,6 +641,9 @@ def test_turn_usage_event_emitted_each_llm_call(tmp_path):
         assert d["prompt_tokens"] == 10
         assert d["completion_tokens"] == 10
         assert "reasoning_tokens" in d and "cost_usd" in d and "cumulative_cost_usd" in d
+        # FakeLLM never reports cached tokens, so the rate should read as a clean 0.0, not an error
+        assert d["cached_tokens"] == 0
+        assert d["cache_rate"] == 0.0
     # cumulative cost is non-decreasing across turns
     cumulative = [d["cumulative_cost_usd"] for d in turn_events]
     assert cumulative == sorted(cumulative)

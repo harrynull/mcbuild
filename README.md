@@ -209,4 +209,7 @@ not hand-picked or touched-up examples.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE), except for the bundled Minecraft block textures/blockstates —
+see [`src/mcbuild/assets/NOTICE.md`](src/mcbuild/assets/NOTICE.md). Minecraft
+is a trademark of Mojang Studios / Microsoft; this project is not affiliated
+with or endorsed by them.

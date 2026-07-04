@@ -51,8 +51,12 @@ def build_contact_sheet(grid: VoxelGrid) -> tuple[Image.Image, dict]:
     for yaw in range(4):
         tiles.append((f"iso {yaw * 90}deg", render_iso(grid, yaw=yaw)))
     tiles.append(("top-down", render_topdown(grid)))
-    tiles.append(("cutaway x", render_iso(grid, yaw=0, clip="x")))
-    tiles.append(("cutaway z", render_iso(grid, yaw=0, clip="z")))
+    # clip keeps the FAR half and drops the near half; the newly-exposed cut face only faces
+    # the camera when the camera sits on that same near side. yaw=0's azimuth is on the wrong
+    # side for both axes, so it just showed a smaller, uncut-looking version of the "iso 0deg"
+    # tile — yaw=2 (x) / yaw=1 (z) are actually on the near side and reveal the interior.
+    tiles.append(("cutaway x", render_iso(grid, yaw=2, clip="x")))
+    tiles.append(("cutaway z", render_iso(grid, yaw=1, clip="z")))
 
     cols, rows = 4, 2
     cell_w, cell_h = THUMB + 20, THUMB + 20

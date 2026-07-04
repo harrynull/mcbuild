@@ -66,6 +66,27 @@ def test_contact_sheet_builds_and_has_stats():
     assert len(stats["top_materials"]) > 0
 
 
+def test_contact_sheet_cutaway_yaws_actually_face_the_cut():
+    # The contact sheet's cutaway tiles must use a yaw where the camera faces the cut plane —
+    # clip keeps the FAR half, so a wrong yaw just shows a smaller-looking, uncut exterior.
+    grid = VoxelGrid()
+    run_blueprint(
+        "fill(0,0,0,7,7,7,'stone')\nfill(3,3,3,4,4,4,'diamond_block')",
+        grid,
+    )
+
+    def _has_diamond(img: Image.Image) -> bool:
+        rgb = np.array(img.convert("RGB"))
+        blue_over_red = rgb[..., 2].astype(int) - rgb[..., 0].astype(int)
+        return bool(((blue_over_red > 20) & (rgb[..., 2] > 60)).any())
+
+    assert _has_diamond(render_iso(grid, yaw=2, clip="x"))  # matches views.py's cutaway x
+    assert _has_diamond(render_iso(grid, yaw=1, clip="z"))  # matches views.py's cutaway z
+    # the previous (wrong) yaw=0 for both really did hide it, confirming this isn't a no-op check
+    assert not _has_diamond(render_iso(grid, yaw=0, clip="x"))
+    assert not _has_diamond(render_iso(grid, yaw=0, clip="z"))
+
+
 def test_contact_sheet_has_no_overlaid_text():
     from mcbuild.render.views import BG
 

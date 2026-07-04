@@ -127,13 +127,25 @@ INSPECT_TOOL = {
                 "cutaway": {
                     "type": "string",
                     "enum": ["none", "x", "z"],
-                    "description": "Slice the build at its mid-plane on this axis to see inside.",
+                    "description": (
+                        "Slice the build at its mid-plane on this axis to see inside (keeps the "
+                        "FAR half, drops the near half). The cut face only reads as a cross-"
+                        "section if the camera actually faces it — pair cutaway='x' with yaw=2 "
+                        "and cutaway='z' with yaw=1; other yaws just show a smaller-looking "
+                        "exterior with nothing new revealed."
+                    ),
                     "default": "none",
                 },
                 "slice_axis": {
                     "type": "string",
                     "enum": ["x", "y", "z"],
-                    "description": "Cut at an arbitrary plane on this axis (world coords, keeps the far side). 'y' reveals a storey from that height up. Overrides cutaway.",
+                    "description": (
+                        "Cut at an arbitrary plane on this axis (world coords, keeps the far "
+                        "side). 'y' reveals a storey from that height up and reads correctly at "
+                        "any yaw. 'x'/'z' have the same facing requirement as cutaway — use "
+                        "yaw=2 for 'x', yaw=1 for 'z' — or the cut face won't be visible. "
+                        "Overrides cutaway."
+                    ),
                 },
                 "slice_at": {
                     "type": "integer",

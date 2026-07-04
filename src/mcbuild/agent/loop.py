@@ -1,4 +1,4 @@
-"""Agent orchestrator: tool dispatch, iteration state, context pruning."""
+"""Agent orchestrator: tool dispatch, iteration state, prompt-cache breakpoints."""
 
 from __future__ import annotations
 
@@ -166,31 +166,45 @@ def _grid_delta(before: VoxelGrid, after: VoxelGrid) -> str:
     return f"delta: +{added} added, -{removed} removed, ~{changed} changed; affected region [{region}]."
 
 
-def _prune_old_images(messages: list[dict], marks: list[tuple[int, str]], keep_last: int = 2) -> None:
-    """Replace old render images with a placeholder, always keeping the latest contact sheet.
+def _cache_block(part: dict) -> dict:
+    return {**part, "cache_control": {"type": "ephemeral"}}
 
-    marks is a list of (message_index, kind) with kind in {"sheet", "inspect"}; the most
-    recent "sheet" (the whole-building overview) is protected even when doing detail work.
+
+def _with_cache_breakpoint(content):
+    """Return `content` with a cache_control breakpoint on its trailing block.
+
+    Anthropic (via OpenRouter) only caches a prefix when a content block carries
+    cache_control; plain string content has no block to attach it to, so it's wrapped.
     """
-    protected: set[int] = {idx for idx, _ in marks[-keep_last:]}
-    for idx, kind in reversed(marks):
-        if kind == "sheet":
-            protected.add(idx)
-            break
-    for idx, _ in marks:
-        if idx in protected:
-            continue
-        msg = messages[idx]
-        content = msg.get("content")
-        if not isinstance(content, list):
-            continue
-        new_content = []
-        for part in content:
-            if isinstance(part, dict) and part.get("type") == "image_url":
-                new_content.append({"type": "text", "text": "[render pruned to save tokens]"})
-            else:
-                new_content.append(part)
-        msg["content"] = new_content
+    if isinstance(content, str):
+        return [_cache_block({"type": "text", "text": content})]
+    if isinstance(content, list) and content:
+        return [*content[:-1], _cache_block(content[-1])]
+    return content
+
+
+def _with_prompt_caching(messages: list[dict]) -> list[dict]:
+    """Build a request-only copy of `messages` with cache_control breakpoints on the system
+    prompt and the latest user message (Anthropic allows up to 4; two is enough here).
+
+    The system prompt (the DSL reference manual, 2k+ tokens) is byte-identical every turn
+    and every run, and the latest-user breakpoint caches the whole growing prefix before
+    it — cached reads are ~10x cheaper than a fresh read, and without any breakpoints every
+    turn re-bills the entire context at full price. This never mutates `messages` itself, so
+    a stale breakpoint from an older user turn can't linger into the next request.
+    """
+    last_user_idx = None
+    for i, m in enumerate(messages):
+        if m.get("role") == "user":
+            last_user_idx = i
+
+    out = []
+    for i, m in enumerate(messages):
+        m2 = dict(m)
+        if (i == 0 and m.get("role") == "system") or i == last_user_idx:
+            m2["content"] = _with_cache_breakpoint(m["content"])
+        out.append(m2)
+    return out
 
 
 def _sanitize_messages_for_json(messages: list[dict]) -> list[dict]:
@@ -241,7 +255,6 @@ def run_agent(
     iteration = 0  # per-attempt artifact counter (includes failed attempts)
     builds_done = 0  # successful builds; the edit budget (config.max_iters) counts these only
     consecutive_failures = 0
-    image_marks: list[tuple[int, str]] = []  # (message_index, "sheet" | "inspect")
 
     def finalize(finished: bool, summary: str) -> AgentResult:
         rundir.write_json("session.json", _sanitize_messages_for_json(messages))
@@ -271,8 +284,6 @@ def run_agent(
             content.append({"type": "text", "text": prompts.build_critique_nudge()})
             content.append({"type": "image_url", "image_url": {"url": image_to_data_url(sheet)}})
         messages.append({"role": "user", "content": content})
-        image_marks.append((len(messages) - 1, "sheet"))
-        _prune_old_images(messages, image_marks)
         return stats
 
     llm_turns = 0
@@ -297,7 +308,7 @@ def run_agent(
         _strip_stale_reasoning(messages)  # keep thinking only on the latest assistant turn
         result = llm.chat(
             model=config.model,
-            messages=messages,
+            messages=_with_prompt_caching(messages),
             tools=tools.ALL_TOOLS,
             reasoning=config.reasoning,
             stream=config.stream,
@@ -305,6 +316,15 @@ def run_agent(
         )
         msg = result.message
         messages.append(_message_to_dict(msg))
+        emit(
+            "turn_usage",
+            turn=llm_turns,
+            prompt_tokens=result.usage.prompt_tokens,
+            completion_tokens=result.usage.completion_tokens,
+            reasoning_tokens=result.usage.reasoning_tokens,
+            cost_usd=result.usage.cost_usd,
+            cumulative_cost_usd=llm.total_usage.cost_usd,
+        )
 
         if config.cost_ceiling is not None and llm.total_usage.cost_usd >= config.cost_ceiling:
             emit("abort", reason=f"cost ceiling of ${config.cost_ceiling:.2f} reached")
@@ -544,8 +564,6 @@ def run_agent(
                         ],
                     }
                 )
-                image_marks.append((len(messages) - 1, "inspect"))
-                _prune_old_images(messages, image_marks)
                 continue
 
             if name == "query":

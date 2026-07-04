@@ -24,6 +24,13 @@ app = typer.Typer(add_completion=False)
 console = Console()
 
 
+def _fmt_tokens(n: int) -> str:
+    if n >= 1000:
+        v = n / 1000
+        return f"{v:.0f}k" if v >= 10 else f"{v:.1f}k"
+    return str(n)
+
+
 def _fit_for_terminal(img: Image.Image, max_width: int = 800) -> Image.Image:
     if img.width <= max_width:
         return img
@@ -147,6 +154,13 @@ def build(
                 console.print()  # already streamed live; just close the line
             else:
                 console.print(Panel(data["text"], title="assistant", border_style="cyan"))
+        elif event_type == "turn_usage":
+            console.print(
+                f"[dim]turn {data['turn']}: {_fmt_tokens(data['prompt_tokens'])} in / "
+                f"{_fmt_tokens(data['completion_tokens'])} out / "
+                f"{_fmt_tokens(data['reasoning_tokens'])} reasoning / "
+                f"${data['cost_usd']:.2f}, cumulative ${data['cumulative_cost_usd']:.2f}[/dim]"
+            )
         elif event_type in ("submit_blueprint", "str_replace", "edit_region"):
             region = data.get("region")
             title = f"iteration {data['iteration']}: {event_type}"

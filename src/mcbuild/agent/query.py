@@ -13,6 +13,12 @@ _AXES = {"x": 0, "y": 1, "z": 2}
 # Distinct glyphs for the legend, assigned in first-seen order.
 _GLYPHS = "#@O%X=+*softceruvwxyz0123456789ABDEFGHIJKLMNPQRSTUVWZ"
 
+# Hard ceiling per side: a slice through a huge, densely-filled build could otherwise print
+# tens of thousands of characters. Windowing to the slice's own occupied extent (rather than
+# the whole build's bounds) already shrinks sparse slices; this caps the dense/large-footprint
+# case too.
+MAX_SLICE_DIM = 128
+
 
 def _assign_glyphs(names: list[str]) -> dict[str, str]:
     mapping: dict[str, str] = {}
@@ -43,8 +49,8 @@ def ascii_slice(grid: VoxelGrid, axis: str, at: int) -> str:
     else:  # axis == "x"
         row_axis, col_axis = ("y", miny, maxy), ("z", minz, maxz)
 
-    _, r_lo, r_hi = row_axis
-    _, c_lo, c_hi = col_axis
+    _, full_r_lo, full_r_hi = row_axis
+    _, full_c_lo, full_c_hi = col_axis
 
     def cell(rv: int, cv: int):
         coord = [0, 0, 0]
@@ -53,18 +59,36 @@ def ascii_slice(grid: VoxelGrid, axis: str, at: int) -> str:
         coord[_AXES[col_axis[0]]] = cv
         return grid.get(coord[0], coord[1], coord[2])
 
-    # Collect materials present in this slice (first-seen order for stable glyphs).
+    # One pass over the whole build's bounds on this plane to find: (a) the slice's own
+    # occupied extent (usually far tighter than the whole build — a slice through one wing
+    # shouldn't print the empty rest of the footprint), and (b) the materials present
+    # (first-seen order for stable glyphs), so the final print pass only touches a small window.
     order: list[str] = []
     seen: set[str] = set()
-    for rv in range(r_lo, r_hi + 1):
-        for cv in range(c_lo, c_hi + 1):
+    occ_r_lo = occ_r_hi = occ_c_lo = occ_c_hi = None
+    for rv in range(full_r_lo, full_r_hi + 1):
+        for cv in range(full_c_lo, full_c_hi + 1):
             idx = cell(rv, cv)
             if idx is None:
                 continue
+            if occ_r_lo is None:
+                occ_r_lo, occ_r_hi, occ_c_lo, occ_c_hi = rv, rv, cv, cv
+            else:
+                occ_r_lo, occ_r_hi = min(occ_r_lo, rv), max(occ_r_hi, rv)
+                occ_c_lo, occ_c_hi = min(occ_c_lo, cv), max(occ_c_hi, cv)
             name = get_block_by_index(idx).name
             if name not in seen:
                 seen.add(name)
                 order.append(name)
+
+    if occ_r_lo is None:
+        return f"slice {axis}={at}: (empty — no blocks in this plane)"
+
+    r_lo, r_hi, c_lo, c_hi = occ_r_lo, occ_r_hi, occ_c_lo, occ_c_hi
+    truncated = r_hi - r_lo + 1 > MAX_SLICE_DIM or c_hi - c_lo + 1 > MAX_SLICE_DIM
+    r_hi = min(r_hi, r_lo + MAX_SLICE_DIM - 1)
+    c_hi = min(c_hi, c_lo + MAX_SLICE_DIM - 1)
+
     glyphs = _assign_glyphs(order)
 
     rows_out = []
@@ -81,6 +105,11 @@ def ascii_slice(grid: VoxelGrid, axis: str, at: int) -> str:
         f"slice {axis}={at}  "
         f"{row_axis[0]}:{r_lo}..{r_hi} (top→bottom)  {col_axis[0]}:{c_lo}..{c_hi} (left→right)"
     )
+    if truncated:
+        header += (
+            f"\n(truncated to the {MAX_SLICE_DIM}x{MAX_SLICE_DIM} window shown; use a region-"
+            "scoped histogram or a narrower slice for the rest)"
+        )
     return header + "\n" + "\n".join(rows_out) + "\n\nlegend: " + legend
 
 

@@ -1,6 +1,6 @@
 import json
 
-from mcbuild.agent.loop import run_agent
+from mcbuild.agent.loop import _with_prompt_caching, run_agent
 from mcbuild.config import Config
 from mcbuild.llm.fake import FakeLLM, _FnCall, _FakeMessage, _ToolCall
 from mcbuild.palette import get_block_by_index
@@ -442,9 +442,10 @@ def _has_image(content) -> bool:
     )
 
 
-def test_pruning_protects_latest_contact_sheet(tmp_path):
-    # 3 inspects after a build would push the whole-building sheet out of a keep-last-2 window;
-    # it must be protected so the overview survives while detail work continues.
+def test_images_are_never_pruned(tmp_path):
+    # Image pruning was removed: it saved tokens but invalidated the prompt cache from that
+    # point forward on every turn (a much bigger cost). All renders, including old inspects,
+    # must stay intact in history so the cached prefix stays stable.
     class InspectHeavyLLM(FakeLLM):
         def __init__(self):
             super().__init__()
@@ -475,14 +476,19 @@ def test_pruning_protects_latest_contact_sheet(tmp_path):
     ]
     assert sheet_msgs, "contact-sheet critique message not found"
     assert _has_image(sheet_msgs[-1]["content"])  # latest sheet keeps its image
-    # at least one older inspect image was pruned to a placeholder
-    pruned = sum(
-        1
-        for m in msgs
+
+    inspect_msgs = [
+        m for m in msgs
         if isinstance(m.get("content"), list)
+        and any(isinstance(p, dict) and "Inspection view" in p.get("text", "") for p in m["content"])
+    ]
+    assert len(inspect_msgs) == 3
+    assert all(_has_image(m["content"]) for m in inspect_msgs)  # none pruned to a placeholder
+    assert not any(
+        isinstance(m.get("content"), list)
         and any(isinstance(p, dict) and "pruned" in p.get("text", "") for p in m["content"])
+        for m in msgs
     )
-    assert pruned >= 1
 
 
 def test_reference_reattached_at_critique(tmp_path):
@@ -578,3 +584,63 @@ def test_edit_region_clears_then_rebuilds_only_the_box(tmp_path):
     grid = result.grid
     assert grid.get(2, 0, 2) == get_block("glass").index  # center replaced
     assert grid.get(0, 0, 0) == get_block("stone").index  # corner (outside region) frozen
+
+
+def test_prompt_caching_marks_system_and_latest_user_message():
+    messages = [
+        {"role": "system", "content": "SYSTEM PROMPT"},
+        {"role": "user", "content": [{"type": "text", "text": "first"}]},
+        {"role": "assistant", "content": "ok", "tool_calls": [{"id": "1", "type": "function", "function": {}}]},
+        {"role": "tool", "tool_call_id": "1", "content": "result"},
+        {"role": "user", "content": "second (plain string)"},
+    ]
+    out = _with_prompt_caching(messages)
+
+    # system prompt: wrapped into a content block with a cache breakpoint
+    assert out[0]["content"] == [
+        {"type": "text", "text": "SYSTEM PROMPT", "cache_control": {"type": "ephemeral"}}
+    ]
+    # first (older) user message is untouched — only the latest user message gets a breakpoint
+    assert out[1]["content"] == [{"type": "text", "text": "first"}]
+    # latest user message: plain string wrapped + breakpoint
+    assert out[4]["content"] == [
+        {"type": "text", "text": "second (plain string)", "cache_control": {"type": "ephemeral"}}
+    ]
+    # original messages list is never mutated
+    assert messages[0]["content"] == "SYSTEM PROMPT"
+    assert messages[4]["content"] == "second (plain string)"
+
+
+def test_prompt_caching_breakpoint_on_last_block_of_list_content():
+    messages = [
+        {"role": "system", "content": "SYS"},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "look at this"},
+                {"type": "image_url", "image_url": {"url": "data:..."}},
+            ],
+        },
+    ]
+    out = _with_prompt_caching(messages)
+    assert "cache_control" not in out[1]["content"][0]
+    assert out[1]["content"][1]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_turn_usage_event_emitted_each_llm_call(tmp_path):
+    events: list[tuple[str, dict]] = []
+    llm = FakeLLM()  # design_brief, broken_submit, fixed_submit, finish = 4 turns
+    config = Config(max_iters=6, seed=1)
+    rundir = RunDir.create("hut", base=str(tmp_path))
+    run_agent("hut", llm, config, rundir, on_event=lambda t, d: events.append((t, d)))
+
+    turn_events = [d for t, d in events if t == "turn_usage"]
+    assert len(turn_events) == 4
+    assert [d["turn"] for d in turn_events] == [1, 2, 3, 4]
+    for d in turn_events:
+        assert d["prompt_tokens"] == 10
+        assert d["completion_tokens"] == 10
+        assert "reasoning_tokens" in d and "cost_usd" in d and "cumulative_cost_usd" in d
+    # cumulative cost is non-decreasing across turns
+    cumulative = [d["cumulative_cost_usd"] for d in turn_events]
+    assert cumulative == sorted(cumulative)

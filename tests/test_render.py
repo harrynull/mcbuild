@@ -1,7 +1,9 @@
+import numpy as np
 from PIL import Image
 
 from mcbuild.dsl.sandbox import run_blueprint
-from mcbuild.render.iso import render_iso, render_topdown
+from mcbuild.render.camera import Camera, render_from_camera
+from mcbuild.render.iso import _slice_keep, render_iso, render_topdown
 from mcbuild.render.sixel import encode_sixel
 from mcbuild.render.views import build_contact_sheet
 from mcbuild.voxel import VoxelGrid
@@ -80,6 +82,25 @@ def test_render_iso_slice_above_everything_is_empty():
     run_blueprint("floor(0,0,3,3,0,'stone')", grid)
     sliced = render_iso(grid, yaw=0, slice_spec=("y", 99))
     assert sliced.getbbox() is None  # nothing kept
+
+
+def test_cutaway_reveals_hidden_interior_material():
+    # a solid stone cube with a fully-enclosed diamond core: a correct cutaway must expose
+    # the core at the cut plane, not skip straight through to the far exterior wall.
+    grid = VoxelGrid()
+    run_blueprint(
+        "fill(0,0,0,7,7,7,'stone')\nfill(3,3,3,4,4,4,'diamond_block')",
+        grid,
+    )
+    keep = _slice_keep(grid, "x", None)  # keeps x >= 3, removing the near half
+    # camera sits in the removed void looking straight down +x into the cut face
+    cam = Camera(position=(-6, 3.5, 3.5), look_at=(10, 3.5, 3.5), view_size=10)
+    img = render_from_camera(grid, cam, keep=keep)
+    rgb = np.array(img.convert("RGB"))
+    # diamond_block's teal is nowhere close to stone's gray; presence proves the core
+    # was actually rendered at the cut plane rather than culled away.
+    blue_over_red = rgb[..., 2].astype(int) - rgb[..., 0].astype(int)
+    assert bool(((blue_over_red > 20) & (rgb[..., 2] > 60)).any())
 
 
 def test_sixel_encoding_smoke():

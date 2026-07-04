@@ -46,9 +46,11 @@ def _build_draw_faces(
     grid: VoxelGrid, max_blocks: int, keep: Callable[[tuple], bool] | None = None
 ) -> list[raster.DrawFace]:
     occupied = {coord for coord, _ in grid.items()}
-    exposed = culling.exposed_coords(occupied)
-    if keep is not None:
-        exposed = {c for c in exposed if keep(c)}
+    # Cull against the KEPT set, not the full grid: a block cut away by `keep` must count
+    # as empty here, or its surviving neighbor across the cut plane never becomes "exposed"
+    # and its face is skipped entirely — showing whatever's behind it instead of the cut face.
+    kept = occupied if keep is None else {c for c in occupied if keep(c)}
+    exposed = culling.exposed_coords(kept)
     if len(exposed) > max_blocks:
         raise CameraRenderError(
             f"build has {len(exposed):,} exposed blocks (cap {max_blocks:,}); inspect a smaller region."

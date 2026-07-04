@@ -25,7 +25,12 @@ def build_stats(grid: VoxelGrid) -> dict:
     if bounds is not None:
         (minx, miny, minz), (maxx, maxy, maxz) = bounds
         dims = (maxx - minx + 1, maxy - miny + 1, maxz - minz + 1)
-    return {"dims": dims, "block_count": len(grid), "top_materials": top_materials}
+    return {
+        "dims": dims,
+        "bounds": bounds,  # ((minx,miny,minz),(maxx,maxy,maxz)) or None
+        "block_count": len(grid),
+        "top_materials": top_materials,
+    }
 
 
 def _format_stats(stats: dict) -> str:

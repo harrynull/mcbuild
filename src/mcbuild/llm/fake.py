@@ -94,7 +94,12 @@ class FakeLLM:
                     id="call_3",
                     function=_FnCall(
                         name="finish",
-                        arguments=json.dumps({"summary": "Built a small stone hut with a doorway."}),
+                        arguments=json.dumps(
+                            {
+                                "summary": "Built a small stone hut with a doorway.",
+                                "completed_interior_check": True,
+                            }
+                        ),
                     ),
                 )
             ]

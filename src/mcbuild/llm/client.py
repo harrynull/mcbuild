@@ -63,6 +63,37 @@ class StreamedMessage:
     tool_calls: list[_StreamToolCall] | None = None
 
 
+def _rd_field(piece, key):
+    if isinstance(piece, dict):
+        return piece.get(key)
+    return getattr(piece, key, None)
+
+
+def _merge_reasoning_detail(acc: dict[int, dict], fragment) -> None:
+    """Merge one streamed reasoning_details fragment into its per-index block.
+
+    Streaming delivers a reasoning block in pieces: `text`/`data` arrive across several
+    fragments and the `signature` usually lands in a later one, all keyed by `index`.
+    We reassemble complete blocks so the signature stays attached to its full text — a
+    naive concat would send Anthropic a thinking block with a mismatched/missing
+    signature and the request would be rejected.
+    """
+    idx = _rd_field(fragment, "index")
+    idx = int(idx) if idx is not None else 0
+    entry = acc.setdefault(idx, {})
+    for key in ("type", "format", "id"):
+        val = _rd_field(fragment, key)
+        if val and not entry.get(key):
+            entry[key] = val
+    for key in ("text", "data", "summary"):
+        val = _rd_field(fragment, key)
+        if val:
+            entry[key] = entry.get(key, "") + val
+    sig = _rd_field(fragment, "signature")
+    if sig:  # last non-empty wins; the signature covers the whole reassembled block
+        entry["signature"] = sig
+
+
 def consume_stream(chunks: Iterable, on_delta: OnDelta | None = None) -> tuple[StreamedMessage, object | None]:
     """Accumulate a stream of chat-completion-chunk objects into a full message.
 
@@ -73,7 +104,7 @@ def consume_stream(chunks: Iterable, on_delta: OnDelta | None = None) -> tuple[S
     """
     content_parts: list[str] = []
     reasoning_parts: list[str] = []
-    reasoning_details: list = []
+    reasoning_acc: dict[int, dict] = {}
     tool_call_acc: dict[int, dict] = {}
     usage_obj = None
 
@@ -101,7 +132,8 @@ def consume_stream(chunks: Iterable, on_delta: OnDelta | None = None) -> tuple[S
 
         details_piece = getattr(delta, "reasoning_details", None)
         if details_piece:
-            reasoning_details.extend(details_piece)
+            for fragment in details_piece:
+                _merge_reasoning_detail(reasoning_acc, fragment)
 
         delta_tool_calls = getattr(delta, "tool_calls", None)
         if delta_tool_calls:
@@ -122,10 +154,11 @@ def consume_stream(chunks: Iterable, on_delta: OnDelta | None = None) -> tuple[S
         for _, v in sorted(tool_call_acc.items())
     ] or None
 
+    reasoning_details = [reasoning_acc[i] for i in sorted(reasoning_acc)] or None
     message = StreamedMessage(
         content="".join(content_parts) or None,
         reasoning="".join(reasoning_parts) or None,
-        reasoning_details=reasoning_details or None,
+        reasoning_details=reasoning_details,
         tool_calls=tool_calls,
     )
     return message, usage_obj

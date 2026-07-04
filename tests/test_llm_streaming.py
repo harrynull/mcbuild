@@ -13,6 +13,30 @@ def _tool_call_delta(index, id=None, name=None, arguments=None):
     return SimpleNamespace(index=index, id=id, function=fn)
 
 
+def test_reasoning_details_fragments_merge_into_complete_signed_block():
+    # a thinking block streams as text pieces first, signature last, all at index 0
+    chunks = [
+        _chunk(reasoning_details=[{"type": "reasoning.text", "text": "Let me ", "index": 0}]),
+        _chunk(reasoning_details=[{"type": "reasoning.text", "text": "think.", "index": 0}]),
+        _chunk(reasoning_details=[{"type": "reasoning.text", "signature": "SIG123", "index": 0}]),
+    ]
+    message, _ = consume_stream(chunks)
+    assert message.reasoning_details is not None
+    assert len(message.reasoning_details) == 1  # one merged block, not three fragments
+    block = message.reasoning_details[0]
+    assert block["text"] == "Let me think."
+    assert block["signature"] == "SIG123"  # signature stays attached to the full text
+
+
+def test_reasoning_details_separate_indices_stay_separate():
+    chunks = [
+        _chunk(reasoning_details=[{"type": "reasoning.text", "text": "A", "index": 0, "signature": "S0"}]),
+        _chunk(reasoning_details=[{"type": "reasoning.text", "text": "B", "index": 1, "signature": "S1"}]),
+    ]
+    message, _ = consume_stream(chunks)
+    assert [b["signature"] for b in message.reasoning_details] == ["S0", "S1"]
+
+
 def test_consume_stream_accumulates_content():
     chunks = [_chunk(content="Design "), _chunk(content="brief: "), _chunk(content="a hut.")]
     message, usage = consume_stream(chunks)

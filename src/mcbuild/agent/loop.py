@@ -83,24 +83,103 @@ def _message_to_dict(msg: Any) -> dict:
         ]
     reasoning_details = getattr(msg, "reasoning_details", None)
     if reasoning_details:
-        d["reasoning_details"] = reasoning_details
+        # Preserve verbatim for Anthropic extended-thinking + tool use, but normalize to
+        # plain dicts (the non-streaming path hands back pydantic objects) so the message
+        # round-trips as JSON when sent back to the API.
+        d["reasoning_details"] = [_to_plain(rd) for rd in reasoning_details]
     return d
+
+
+def _to_plain(obj: Any):
+    if isinstance(obj, dict):
+        return obj
+    for attr in ("model_dump", "dict", "to_dict"):
+        fn = getattr(obj, attr, None)
+        if callable(fn):
+            try:
+                return fn()
+            except Exception:
+                pass
+    return obj
 
 
 def _tool_result(tool_call_id: str, content: str) -> dict:
     return {"role": "tool", "tool_call_id": tool_call_id, "content": content}
 
 
+def _strip_stale_reasoning(messages: list[dict]) -> None:
+    """Keep thinking blocks only on the most recent assistant message.
+
+    Anthropic (via OpenRouter) requires the thinking block with its `signature` on the
+    latest assistant turn to continue tool use, but rejects the request if any *stale*
+    thinking block in history has a signature that no longer validates. Dropping older
+    ones avoids that failure mode and saves tokens; the current turn's is untouched.
+    """
+    last_assistant = None
+    for i, m in enumerate(messages):
+        if m.get("role") == "assistant":
+            last_assistant = i
+    for i, m in enumerate(messages):
+        if m.get("role") == "assistant" and i != last_assistant and "reasoning_details" in m:
+            m.pop("reasoning_details", None)
+
+
 def _format_stats_for_tool(stats: dict) -> str:
     dims = stats["dims"]
     dims_str = f"{dims[0]}x{dims[1]}x{dims[2]}" if dims else "empty"
     mats = ", ".join(f"{n} x{c}" for n, c in stats["top_materials"]) or "(none)"
-    return f"Build succeeded. dimensions={dims_str} blocks={stats['block_count']} top_materials=[{mats}]"
+    bounds = stats.get("bounds")
+    if bounds:
+        (minx, miny, minz), (maxx, maxy, maxz) = bounds
+        bounds_str = f" bounds=[x {minx}..{maxx}, y {miny}..{maxy}, z {minz}..{maxz}]"
+    else:
+        bounds_str = ""
+    return (
+        f"Build succeeded. dimensions={dims_str}{bounds_str} "
+        f"blocks={stats['block_count']} top_materials=[{mats}]"
+    )
 
 
-def _prune_old_images(messages: list[dict], marks: list[int], keep_last: int = 2) -> None:
-    stale = marks[:-keep_last] if len(marks) > keep_last else []
-    for idx in stale:
+def _grid_delta(before: VoxelGrid, after: VoxelGrid) -> str:
+    """Describe how `after` differs from `before` — added/removed/changed + changed bbox."""
+    b = dict(before.items())
+    a = dict(after.items())
+    added = removed = changed = 0
+    diff_coords = []
+    for coord in set(a) | set(b):
+        bv, av = b.get(coord), a.get(coord)
+        if bv == av:
+            continue
+        diff_coords.append(coord)
+        if bv is None:
+            added += 1
+        elif av is None:
+            removed += 1
+        else:
+            changed += 1
+    if not diff_coords:
+        return "delta: NO CHANGE — this edit placed/removed nothing (check your coordinates/axis)."
+    xs = [c[0] for c in diff_coords]
+    ys = [c[1] for c in diff_coords]
+    zs = [c[2] for c in diff_coords]
+    region = f"x {min(xs)}..{max(xs)}, y {min(ys)}..{max(ys)}, z {min(zs)}..{max(zs)}"
+    return f"delta: +{added} added, -{removed} removed, ~{changed} changed; affected region [{region}]."
+
+
+def _prune_old_images(messages: list[dict], marks: list[tuple[int, str]], keep_last: int = 2) -> None:
+    """Replace old render images with a placeholder, always keeping the latest contact sheet.
+
+    marks is a list of (message_index, kind) with kind in {"sheet", "inspect"}; the most
+    recent "sheet" (the whole-building overview) is protected even when doing detail work.
+    """
+    protected: set[int] = {idx for idx, _ in marks[-keep_last:]}
+    for idx, kind in reversed(marks):
+        if kind == "sheet":
+            protected.add(idx)
+            break
+    for idx, _ in marks:
+        if idx in protected:
+            continue
         msg = messages[idx]
         content = msg.get("content")
         if not isinstance(content, list):
@@ -148,22 +227,27 @@ def run_agent(
     user_content: list[dict] = [
         {"type": "text", "text": prompts.build_user_prompt(prompt, config.seed, reference_image is not None)}
     ]
+    ref_thumb_url: str | None = None
     if reference_image is not None:
         user_content.append({"type": "image_url", "image_url": {"url": image_to_data_url(reference_image)}})
+        thumb = reference_image.copy()
+        thumb.thumbnail((320, 320))
+        ref_thumb_url = image_to_data_url(thumb)
     messages.append({"role": "user", "content": user_content})
 
     best_grid: VoxelGrid | None = None
     best_stats: dict | None = None
     cumulative_source = ""  # full replayable program reflecting best_grid's construction
-    iteration = 0
+    iteration = 0  # per-attempt artifact counter (includes failed attempts)
+    builds_done = 0  # successful builds; the edit budget (config.max_iters) counts these only
     consecutive_failures = 0
-    image_marks: list[int] = []
+    image_marks: list[tuple[int, str]] = []  # (message_index, "sheet" | "inspect")
 
     def finalize(finished: bool, summary: str) -> AgentResult:
         rundir.write_json("session.json", _sanitize_messages_for_json(messages))
         return AgentResult(finished, summary, best_grid, best_stats, iteration, llm.total_usage)
 
-    def report_success(grid: VoxelGrid, iteration: int, iter_dir, tc) -> dict:
+    def report_success(grid: VoxelGrid, iteration: int, iter_dir, tc, note: str = "") -> dict:
         """Render/save/export a successful build and queue the critique image. Returns stats."""
         sheet, stats = views.build_contact_sheet(grid)
         rundir.save_image(f"iter_{iteration:02d}/render.png", sheet)
@@ -171,29 +255,46 @@ def run_agent(
         if len(grid) > 0:
             export_schem(grid, str(iter_dir / "blueprint.schem"))
         emit("render", iteration=iteration, stats=stats, image=sheet)
-        messages.append(_tool_result(tc.id, _format_stats_for_tool(stats)))
-        messages.append(
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompts.build_critique_nudge()},
-                    {"type": "image_url", "image_url": {"url": image_to_data_url(sheet)}},
-                ],
-            }
-        )
-        image_marks.append(len(messages) - 1)
+        result_text = _format_stats_for_tool(stats)
+        if note:
+            result_text += "\n" + note
+        messages.append(_tool_result(tc.id, result_text))
+
+        content: list[dict] = []
+        if ref_thumb_url is not None:
+            content.append({"type": "text", "text": "REFERENCE (reproduce this closely):"})
+            content.append({"type": "image_url", "image_url": {"url": ref_thumb_url}})
+            content.append({"type": "text", "text": "YOUR CURRENT BUILD:"})
+            content.append({"type": "image_url", "image_url": {"url": image_to_data_url(sheet)}})
+            content.append({"type": "text", "text": prompts.build_reference_critique_nudge()})
+        else:
+            content.append({"type": "text", "text": prompts.build_critique_nudge()})
+            content.append({"type": "image_url", "image_url": {"url": image_to_data_url(sheet)}})
+        messages.append({"role": "user", "content": content})
+        image_marks.append((len(messages) - 1, "sheet"))
         _prune_old_images(messages, image_marks)
         return stats
 
     llm_turns = 0
-    max_llm_turns = config.max_iters * 4 + 4  # generous cap so text-only turns can't loop forever
+    max_llm_turns = config.max_iters * 4 + 6  # generous cap so text-only/inspect turns can't loop forever
 
     def on_delta(kind: str, text: str) -> None:
         emit(f"{kind}_delta", text=text)
 
-    while iteration < config.max_iters and llm_turns < max_llm_turns:
+    def budget_line() -> str:
+        remaining = config.max_iters - builds_done
+        if remaining <= 0:
+            return "Edit budget exhausted — that was your FINAL edit. Verify, then call finish() now."
+        if remaining == 1:
+            return "Edits remaining: 1 — this is your last edit, make it count, then finish()."
+        return f"Edits remaining: {remaining}. (inspect and query are FREE and do not use the budget.)"
+
+    # The build-edit budget counts successful builds only (failed attempts and free
+    # inspect/query turns don't burn it); llm_turns is a hard stop against runaway loops.
+    while llm_turns < max_llm_turns:
         llm_turns += 1
         emit("turn_start")
+        _strip_stale_reasoning(messages)  # keep thinking only on the latest assistant turn
         result = llm.chat(
             model=config.model,
             messages=messages,
@@ -218,9 +319,14 @@ def run_agent(
 
         tool_calls = getattr(msg, "tool_calls", None) or []
         if not tool_calls:
-            messages.append(
-                {"role": "user", "content": "Please proceed: call submit_blueprint with your design, or finish() if already done."}
-            )
+            if best_grid is None:
+                nudge = "Please proceed: call submit_blueprint with your design."
+            else:
+                nudge = (
+                    "Please proceed: refine with patch_blueprint or edit_region, verify with "
+                    "inspect/query (free), or call finish() if the build is done."
+                )
+            messages.append({"role": "user", "content": nudge})
             continue
 
         finished = False
@@ -247,6 +353,13 @@ def run_agent(
                 break
 
             if name == "submit_blueprint":
+                if builds_done >= config.max_iters:
+                    messages.append(_tool_result(
+                        tc.id,
+                        "Edit budget reached — no edits remaining. Call finish() to export your best "
+                        "build (further build calls are ignored).",
+                    ))
+                    continue
                 iteration += 1
                 code = args.get("code", "")
                 design_notes = args.get("design_notes", "")
@@ -260,15 +373,16 @@ def run_agent(
                 except BlueprintError as e:
                     consecutive_failures += 1
                     emit("blueprint_error", iteration=iteration, error=str(e))
-                    messages.append(_tool_result(tc.id, f"Blueprint failed:\n{e}"))
+                    messages.append(_tool_result(tc.id, f"Blueprint failed (this did NOT use an edit):\n{e}"))
                     if consecutive_failures >= config.max_consecutive_failures:
                         emit("abort", reason="too many consecutive blueprint failures")
                         return finalize(False, "Aborted after repeated blueprint failures.")
                     continue
 
                 consecutive_failures = 0
+                builds_done += 1
                 cumulative_source = code  # a full submit RESETS the construction history
-                best_grid, best_stats = grid, report_success(grid, iteration, iter_dir, tc)
+                best_grid, best_stats = grid, report_success(grid, iteration, iter_dir, tc, note=budget_line())
                 continue
 
             if name in ("patch_blueprint", "edit_region"):
@@ -276,6 +390,13 @@ def run_agent(
                     messages.append(
                         _tool_result(tc.id, f"No build exists yet; call submit_blueprint before {name}.")
                     )
+                    continue
+                if builds_done >= config.max_iters:
+                    messages.append(_tool_result(
+                        tc.id,
+                        "Edit budget reached — no edits remaining. Call finish() to export your best "
+                        "build (further build calls are ignored).",
+                    ))
                     continue
 
                 iteration += 1
@@ -295,17 +416,21 @@ def run_agent(
                 except BlueprintError as e:
                     consecutive_failures += 1
                     emit("blueprint_error", iteration=iteration, error=str(e))
-                    messages.append(_tool_result(tc.id, f"{name} failed:\n{e}"))
+                    messages.append(_tool_result(tc.id, f"{name} failed (this did NOT use an edit):\n{e}"))
                     if consecutive_failures >= config.max_consecutive_failures:
                         emit("abort", reason="too many consecutive blueprint failures")
                         return finalize(False, "Aborted after repeated blueprint failures.")
                     continue
 
                 consecutive_failures = 0
+                builds_done += 1
+                delta = _grid_delta(best_grid, candidate)
                 header = f"\n\n# --- {name}" + (f" region={region}" if region else "") + " ---\n"
                 cumulative_source = cumulative_source + header + code
                 (iter_dir / "blueprint.py").write_text(cumulative_source, encoding="utf-8")
-                best_grid, best_stats = candidate, report_success(candidate, iteration, iter_dir, tc)
+                best_grid, best_stats = candidate, report_success(
+                    candidate, iteration, iter_dir, tc, note=delta + "\n" + budget_line()
+                )
                 continue
 
             if name == "inspect":
@@ -346,7 +471,7 @@ def run_agent(
                         ],
                     }
                 )
-                image_marks.append(len(messages) - 1)
+                image_marks.append((len(messages) - 1, "inspect"))
                 _prune_old_images(messages, image_marks)
                 continue
 
@@ -376,4 +501,4 @@ def run_agent(
         if finished:
             return finalize(True, finish_summary)
 
-    return finalize(False, "Reached max iterations without finishing.")
+    return finalize(False, "Stopped without an explicit finish (edit budget or turn limit reached).")

@@ -43,13 +43,21 @@ screenshots of the result so you can critique and refine your own work.
    - Is the interior (visible in the cutaways) sensible, not just a hollow shell?
    - Are there missing details (windows, doors, trim, roofline) that would make it read as
      finished rather than a blockout?
-5. Use `inspect` for a close look before deciding your next move: yaw/cutaway for a quick fixed \
-   angle, `slice_axis`/`slice_at` for a specific storey, or `camera_pos`+`look_at` for a free \
-   camera at any position/angle (e.g. camera_pos=[x, 2, -5], look_at=[x, 1, 0] to study a door). \
-   Use `query` (text) to verify exact block placement or read an ASCII floor plan — more reliable \
-   than a small render for checking interiors.
+5. `inspect` and `query` are FREE — they never consume your edit budget. Look BEFORE you spend \
+   an edit: `inspect` gives a render (yaw/cutaway for a quick angle, `slice_axis`/`slice_at` for \
+   a specific storey, or `camera_pos`+`look_at` for a free camera up close, e.g. camera_pos=[x, \
+   2, -5], look_at=[x, 1, 0] to study a door). `query` returns lossless TEXT — the exact block at \
+   a coordinate, an ASCII floor plan of a storey, or a material histogram — more reliable than a \
+   small render for verifying placement and interiors. Verify, then patch precisely.
 6. Revise with `patch_blueprint`/`edit_region` (incremental) or another `submit_blueprint` \
    (structural redo), or call `finish` once you're satisfied.
+
+You have a limited EDIT BUDGET (a fixed number of successful builds). Every successful \
+submit_blueprint / patch_blueprint / edit_region uses one; failed attempts and inspect/query do \
+NOT. Each build result tells you how many edits remain — plan so you don't get cut off mid-detail: \
+spend early edits on structure, later ones on detail, and don't waste an edit on a change you \
+could have verified first with a free inspect/query. Coordinates can be negative (roof overhangs, \
+mirrors) — read the `bounds=[...]` in each build result rather than guessing from dimensions.
 
 Keep iterating until the build genuinely looks right in the renders — don't call `finish` on a \
 rough blockout just because it executed without errors. Stairs, slabs, walls, fences, and \
@@ -61,32 +69,49 @@ shell → roof → openings → interior → weathering. Details matter.
 
 
 def build_user_prompt(prompt: str, seed: int, has_reference: bool) -> str:
-    ref_note = (
-        "\nA concept-reference image is attached below — use it as inspiration for massing, "
-        "proportions, and palette, but express it through the blueprint DSL in your own way.\n"
-        if has_reference
-        else ""
-    )
+    if has_reference:
+        ref_note = (
+            "\nA concept-reference image is attached below. REPRODUCE it as closely as the DSL "
+            "allows — match its massing, storey count, roof shapes, opening rhythm, and palette; "
+            "take liberties only at the micro-detail level. Start your design brief with a "
+            "REFERENCE ANALYSIS: estimated proportions (width:depth:height), number of storeys, "
+            "roof type for each mass, the dominant materials mapped to specific Minecraft blocks, "
+            "and 3-5 distinctive features to reproduce. Commit these observations to text so you "
+            "can check each one against your renders later.\n"
+        )
+    else:
+        ref_note = ""
     return f"""Build this: {prompt}
 
 {ref_note}
-Begin with your design brief. If appliable, name the rooms/storeys and what's in them and name \
+Begin with your design brief. If applicable, name the rooms/storeys and what's in them and name \
 major external elements."""
 
 
 def build_reference_image_prompt(building_prompt: str) -> str:
     return (
-        f"isometric view of {building_prompt}, blocky Minecraft voxel style, "
-        "entire building visible, plain background"
+        f"A single building: {building_prompt}. 3/4 isometric view, blocky Minecraft voxel style, "
+        "entire building fully in frame, flat neutral background, no people, no landscape, no text."
     )
 
 
 def build_critique_nudge() -> str:
     return (
         "Here is the current render: 4 isometric angles, a top-down view, and 2 interior "
-        "cutaways, with build stats below. Compare it against the prompt (and the concept "
-        "reference image, if one was provided) and critique it: does it match the prompt and "
-        "scale? Are proportions and materials right? Does the interior make sense? What details "
-        "are missing? If possible, list the 2 to 3 biggest defects and where they are, then fix the biggest ones. "
-        "Then either submit a revised blueprint or call finish if it's genuinely done."
+        "cutaways, with build stats below. Critique it against the prompt: does it match the "
+        "prompt and scale? Are proportions and materials right? Does the interior make sense? "
+        "What details are missing? List the 2-3 biggest defects and where they are (use the "
+        "bounds in the stats for coordinates), then fix the biggest one. Verify with a free "
+        "inspect/query first if unsure. Then submit a revision or call finish if genuinely done."
+    )
+
+
+def build_reference_critique_nudge() -> str:
+    return (
+        "Above are the concept REFERENCE and YOUR CURRENT BUILD (4 iso angles + top-down + 2 "
+        "cutaways), with stats. Compare them side by side and list the 3 BIGGEST discrepancies in "
+        "massing, roof shape, palette, and opening rhythm — be specific about where. Then fix the "
+        "largest discrepancy (patch_blueprint/edit_region, using the bounds in the stats for "
+        "coordinates). Verify with a free inspect/query if unsure. Call finish only when the build "
+        "clearly reads as the same building as the reference."
     )

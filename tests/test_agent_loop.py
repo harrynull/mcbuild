@@ -130,6 +130,128 @@ def _tool_msg(name, args, call_id="c"):
     )
 
 
+def test_stale_reasoning_stripped_from_all_but_latest_assistant():
+    from mcbuild.agent.loop import _strip_stale_reasoning
+
+    messages = [
+        {"role": "system", "content": "s"},
+        {"role": "assistant", "content": "a1", "reasoning_details": [{"text": "t1", "signature": "S1"}]},
+        {"role": "tool", "tool_call_id": "x", "content": "r"},
+        {"role": "assistant", "content": "a2", "reasoning_details": [{"text": "t2", "signature": "S2"}]},
+    ]
+    _strip_stale_reasoning(messages)
+    assert "reasoning_details" not in messages[1]  # older turn stripped
+    assert messages[3]["reasoning_details"][0]["signature"] == "S2"  # latest kept intact
+
+
+def _tool_texts(rundir) -> list[str]:
+    """All tool-role message contents from the saved session, for asserting result text."""
+    data = json.loads((rundir.root / "session.json").read_text())
+    return [m["content"] for m in data if m.get("role") == "tool" and isinstance(m.get("content"), str)]
+
+
+def _finish_msg():
+    return _tool_msg("finish", {"summary": "done", "completed_interior_check": True}, call_id="cf")
+
+
+def test_success_result_includes_bounds_and_budget(tmp_path):
+    llm = FakeLLM()  # design_brief, broken_submit, fixed_submit(success), finish
+    config = Config(max_iters=6, seed=1)
+    rundir = RunDir.create("hut", base=str(tmp_path))
+    run_agent("hut", llm, config, rundir)
+    texts = " \n ".join(_tool_texts(rundir))
+    assert "bounds=[x" in texts  # min corner exposed, not just dims
+    assert "Edits remaining:" in texts
+
+
+def test_budget_caps_successful_builds(tmp_path):
+    class SpendyLLM(FakeLLM):
+        def __init__(self):
+            super().__init__()
+            self._script = [
+                self._fixed_submit,  # build 1
+                self._patch,  # build 2 (budget=2 reached)
+                self._patch,  # should be REJECTED (budget exhausted)
+                self._finish_ok,
+            ]
+
+        def _patch(self):
+            return _tool_msg("patch_blueprint", {"code": "set_block(0, 4, 0, 'glass')", "design_notes": "x"})
+
+        def _finish_ok(self):
+            return _finish_msg()
+
+    llm = SpendyLLM()
+    config = Config(max_iters=2, seed=1)
+    rundir = RunDir.create("hut", base=str(tmp_path))
+    result = run_agent("hut", llm, config, rundir)
+    assert result.finished is True
+    assert any("Edit budget reached" in t for t in _tool_texts(rundir))
+
+
+def test_failed_build_does_not_consume_budget(tmp_path):
+    # one failure then two successful builds must all fit within a budget of 2
+    class FailThenBuildLLM(FakeLLM):
+        def __init__(self):
+            super().__init__()
+            self._script = [self._broken_submit, self._fixed_submit, self._patch, self._finish_ok]
+
+        def _patch(self):
+            return _tool_msg("patch_blueprint", {"code": "set_block(0, 4, 0, 'glass')", "design_notes": "x"})
+
+        def _finish_ok(self):
+            return _finish_msg()
+
+    llm = FailThenBuildLLM()
+    config = Config(max_iters=2, seed=1)
+    rundir = RunDir.create("hut", base=str(tmp_path))
+    result = run_agent("hut", llm, config, rundir)
+    assert result.finished is True
+    texts = _tool_texts(rundir)
+    # the failed submit is annotated as not using an edit, and the two real builds both ran
+    assert any("did NOT use an edit" in t for t in texts)
+    assert not any("Edit budget reached" in t for t in texts)
+
+
+def test_patch_result_reports_block_delta(tmp_path):
+    class DeltaLLM(FakeLLM):
+        def __init__(self):
+            super().__init__()
+            self._script = [self._fixed_submit, self._patch, self._finish_ok]
+
+        def _patch(self):
+            return _tool_msg("patch_blueprint", {"code": "fill(0, 5, 0, 3, 5, 3, 'glass')", "design_notes": "roof"})
+
+        def _finish_ok(self):
+            return _finish_msg()
+
+    llm = DeltaLLM()
+    config = Config(max_iters=6, seed=1)
+    rundir = RunDir.create("hut", base=str(tmp_path))
+    run_agent("hut", llm, config, rundir)
+    assert any("delta: +16 added" in t for t in _tool_texts(rundir))
+
+
+def test_noop_patch_delta_flags_no_change(tmp_path):
+    class NoopLLM(FakeLLM):
+        def __init__(self):
+            super().__init__()
+            self._script = [self._fixed_submit, self._patch, self._finish_ok]
+
+        def _patch(self):
+            # clear a region with nothing in it -> no change
+            return _tool_msg("patch_blueprint", {"code": "clear(50, 50, 50, 52, 52, 52)", "design_notes": "noop"})
+
+        def _finish_ok(self):
+            return _finish_msg()
+
+    llm = NoopLLM()
+    config = Config(max_iters=6, seed=1)
+    rundir = RunDir.create("hut", base=str(tmp_path))
+    run_agent("hut", llm, config, rundir)
+    assert any("NO CHANGE" in t for t in _tool_texts(rundir))
+
+
 def test_patch_blueprint_appends_to_cumulative_source(tmp_path):
     class PatchingFakeLLM(FakeLLM):
         def __init__(self):
@@ -186,6 +308,80 @@ def test_failing_patch_leaves_best_grid_untouched(tmp_path):
 
     assert result.finished is True
     assert result.grid is not None and len(result.grid) > 0  # the good submit grid survives
+
+
+def _session_messages(rundir):
+    return json.loads((rundir.root / "session.json").read_text())
+
+
+def _has_image(content) -> bool:
+    return isinstance(content, list) and any(
+        isinstance(p, dict) and p.get("type") == "image_url" for p in content
+    )
+
+
+def test_pruning_protects_latest_contact_sheet(tmp_path):
+    # 3 inspects after a build would push the whole-building sheet out of a keep-last-2 window;
+    # it must be protected so the overview survives while detail work continues.
+    class InspectHeavyLLM(FakeLLM):
+        def __init__(self):
+            super().__init__()
+            self._script = [
+                self._fixed_submit,
+                self._insp,
+                self._insp,
+                self._insp,
+                self._finish_ok,
+            ]
+
+        def _insp(self):
+            return _tool_msg("inspect", {"yaw": 1})
+
+        def _finish_ok(self):
+            return _tool_msg("finish", {"summary": "done", "completed_interior_check": True}, call_id="cf")
+
+    llm = InspectHeavyLLM()
+    config = Config(max_iters=6, seed=1)
+    rundir = RunDir.create("hut", base=str(tmp_path))
+    run_agent("hut", llm, config, rundir)
+
+    msgs = _session_messages(rundir)
+    sheet_msgs = [
+        m for m in msgs
+        if isinstance(m.get("content"), list)
+        and any(isinstance(p, dict) and "4 isometric angles" in p.get("text", "") for p in m["content"])
+    ]
+    assert sheet_msgs, "contact-sheet critique message not found"
+    assert _has_image(sheet_msgs[-1]["content"])  # latest sheet keeps its image
+    # at least one older inspect image was pruned to a placeholder
+    pruned = sum(
+        1
+        for m in msgs
+        if isinstance(m.get("content"), list)
+        and any(isinstance(p, dict) and "pruned" in p.get("text", "") for p in m["content"])
+    )
+    assert pruned >= 1
+
+
+def test_reference_reattached_at_critique(tmp_path):
+    from PIL import Image as PILImage
+
+    ref = PILImage.new("RGB", (128, 128), (100, 140, 90))
+    llm = FakeLLM()
+    config = Config(max_iters=6, seed=1)
+    rundir = RunDir.create("hut", base=str(tmp_path))
+    run_agent("hut", llm, config, rundir, reference_image=ref)
+
+    msgs = _session_messages(rundir)
+    critique = [
+        m for m in msgs
+        if isinstance(m.get("content"), list)
+        and any(isinstance(p, dict) and "REFERENCE" in p.get("text", "") for p in m["content"])
+    ]
+    assert critique, "reference-aware critique message not found"
+    # both the reference thumbnail and the build render are attached together
+    img_parts = [p for p in critique[-1]["content"] if isinstance(p, dict) and p.get("type") == "image_url"]
+    assert len(img_parts) == 2
 
 
 def test_inspect_free_camera_mode(tmp_path):

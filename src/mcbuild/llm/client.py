@@ -9,6 +9,7 @@ import uuid
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from io import BytesIO
+from typing import Any, cast
 
 from openai import OpenAI
 from PIL import Image
@@ -33,7 +34,7 @@ class Usage:
         """Fraction of prompt_tokens served from cache (0.0-1.0), or 0.0 if none/unknown."""
         return self.cached_tokens / self.prompt_tokens if self.prompt_tokens else 0.0
 
-    def add(self, other: "Usage") -> None:
+    def add(self, other: Usage) -> None:
         self.prompt_tokens += other.prompt_tokens
         self.completion_tokens += other.completion_tokens
         self.reasoning_tokens += other.reasoning_tokens
@@ -249,8 +250,8 @@ class OpenRouterClient:
             try:
                 resp = self._client.chat.completions.create(
                     model=model,
-                    messages=messages,
-                    tools=tools,
+                    messages=cast(Any, messages),
+                    tools=cast(Any, tools),
                     user=self.session_id,
                     extra_body=extra_body,
                 )
@@ -282,8 +283,8 @@ class OpenRouterClient:
             try:
                 stream = self._client.chat.completions.create(
                     model=model,
-                    messages=messages,
-                    tools=tools,
+                    messages=cast(Any, messages),
+                    tools=cast(Any, tools),
                     user=self.session_id,
                     extra_body=extra_body,
                     stream=True,

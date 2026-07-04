@@ -1,6 +1,6 @@
 import pytest
 
-from mcbuild.voxel import MAX_BLOCKS, MAX_EXTENT, VoxelGrid, VoxelLimitError
+from mcbuild.voxel import MAX_EXTENT, VoxelGrid, VoxelLimitError
 
 
 def test_set_and_get():

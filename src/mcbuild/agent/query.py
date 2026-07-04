@@ -65,26 +65,26 @@ def ascii_slice(grid: VoxelGrid, axis: str, at: int) -> str:
     # (first-seen order for stable glyphs), so the final print pass only touches a small window.
     order: list[str] = []
     seen: set[str] = set()
-    occ_r_lo = occ_r_hi = occ_c_lo = occ_c_hi = None
+    occ: tuple[int, int, int, int] | None = None
     for rv in range(full_r_lo, full_r_hi + 1):
         for cv in range(full_c_lo, full_c_hi + 1):
             idx = cell(rv, cv)
             if idx is None:
                 continue
-            if occ_r_lo is None:
-                occ_r_lo, occ_r_hi, occ_c_lo, occ_c_hi = rv, rv, cv, cv
+            if occ is None:
+                occ = (rv, rv, cv, cv)
             else:
-                occ_r_lo, occ_r_hi = min(occ_r_lo, rv), max(occ_r_hi, rv)
-                occ_c_lo, occ_c_hi = min(occ_c_lo, cv), max(occ_c_hi, cv)
+                occ_r_lo, occ_r_hi, occ_c_lo, occ_c_hi = occ
+                occ = (min(occ_r_lo, rv), max(occ_r_hi, rv), min(occ_c_lo, cv), max(occ_c_hi, cv))
             name = get_block_by_index(idx).name
             if name not in seen:
                 seen.add(name)
                 order.append(name)
 
-    if occ_r_lo is None:
+    if occ is None:
         return f"slice {axis}={at}: (empty — no blocks in this plane)"
 
-    r_lo, r_hi, c_lo, c_hi = occ_r_lo, occ_r_hi, occ_c_lo, occ_c_hi
+    r_lo, r_hi, c_lo, c_hi = occ
     truncated = r_hi - r_lo + 1 > MAX_SLICE_DIM or c_hi - c_lo + 1 > MAX_SLICE_DIM
     r_hi = min(r_hi, r_lo + MAX_SLICE_DIM - 1)
     c_hi = min(c_hi, c_lo + MAX_SLICE_DIM - 1)

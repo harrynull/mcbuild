@@ -38,7 +38,7 @@ def _fit(img: Image.Image, size: int) -> Image.Image:
     ratio = min(size / img.width, size / img.height)
     new_w = max(1, round(img.width * ratio))
     new_h = max(1, round(img.height * ratio))
-    resized = img.resize((new_w, new_h), Image.LANCZOS)
+    resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
     canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     canvas.paste(resized, ((size - new_w) // 2, (size - new_h) // 2), resized)
     return canvas
@@ -71,6 +71,6 @@ def build_contact_sheet(grid: VoxelGrid) -> tuple[Image.Image, dict]:
 
     if sheet.width > MAX_WIDTH:
         ratio = MAX_WIDTH / sheet.width
-        sheet = sheet.resize((MAX_WIDTH, int(sheet.height * ratio)), Image.LANCZOS)
+        sheet = sheet.resize((MAX_WIDTH, int(sheet.height * ratio)), Image.Resampling.LANCZOS)
 
     return sheet, stats

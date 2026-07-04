@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import cache, lru_cache
 
 from mcbuild.render import blockstate, textures
 
@@ -31,10 +31,15 @@ class Face:
 
 # --- box -> faces (before rotation), in 0..16 space ---
 
+_Corner = tuple[float, float, float]
+_Normal = tuple[int, int, int]
+_Uv = tuple[float, float]
+
+
 # each face: (normal, 4 corners as (x,y,z), 4 uvs) using box min/max
-def _box_faces(box: Box):
+def _box_faces(box: Box) -> list[tuple[_Normal, list[_Corner], list[_Uv]]]:
     x0, y0, z0, x1, y1, z1 = box
-    faces = [
+    faces: list[tuple[_Normal, list[_Corner]]] = [
         # up (+y)
         ((0, 1, 0), [(x0, y1, z0), (x0, y1, z1), (x1, y1, z1), (x1, y1, z0)]),
         # down (-y)
@@ -54,7 +59,7 @@ def _box_faces(box: Box):
 
 # --- rotation about the cell center (8,8,8), degrees ---
 
-def _rot(px, py, pz, ax, ay):
+def _rot(px: float, py: float, pz: float, ax: float, ay: float) -> tuple[float, float, float]:
     x, y, z = px - 8.0, py - 8.0, pz - 8.0
     if ax:
         a = math.radians(ax)
@@ -123,7 +128,7 @@ _SUFFIXES = (
 )
 
 
-@lru_cache(maxsize=None)
+@cache
 def _base_texture(name: str) -> str | None:
     base = name
     for suf in _SUFFIXES:
@@ -139,11 +144,16 @@ def _base_texture(name: str) -> str | None:
 _FULL_CUBE: list[Box] = [(0, 0, 0, 16, 16, 16)]
 
 
+def _rot_corner(corner: _Corner, ax: float, ay: float) -> _Corner:
+    x, y, z = _rot(*corner, ax, ay)
+    return x / 16.0, y / 16.0, z / 16.0
+
+
 def _faces_from_boxes(boxes, ax, ay, tex, tint) -> list[Face]:
     out: list[Face] = []
     for box in boxes:
         for normal, corners, uvs in _box_faces(box):
-            rc = tuple(tuple(v / 16.0 for v in _rot(*c, ax, ay)) for c in corners)
+            rc = tuple(_rot_corner(c, ax, ay) for c in corners)
             rn = _rot(normal[0] + 8, normal[1] + 8, normal[2] + 8, ax, ay)
             rn = (rn[0] - 8.0, rn[1] - 8.0, rn[2] - 8.0)
             out.append(

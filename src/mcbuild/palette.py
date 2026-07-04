@@ -15,7 +15,7 @@ from __future__ import annotations
 import difflib
 import json
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import cache, lru_cache
 from pathlib import Path
 
 REGISTRY_PATH = Path(__file__).resolve().parent / "assets" / "minecraft_block_registry.json"
@@ -224,7 +224,7 @@ def _load_registry_names() -> tuple[str, ...]:
     return tuple(name for name in raw if name not in _EXCLUDED_NAMES)
 
 
-@lru_cache(maxsize=None)
+@cache
 def _texture_derived_color(name: str) -> tuple[tuple[int, int, int], bool] | None:
     from mcbuild.render import textures  # local import: avoids a palette<->render import cycle
 
@@ -232,7 +232,7 @@ def _texture_derived_color(name: str) -> tuple[tuple[int, int, int], bool] | Non
     if tex is None:
         return None
     pixels = list(tex.convert("RGBA").tobytes())
-    pixels = list(zip(pixels[0::4], pixels[1::4], pixels[2::4], pixels[3::4]))
+    pixels = list(zip(pixels[0::4], pixels[1::4], pixels[2::4], pixels[3::4], strict=True))
     opaque = [p for p in pixels if p[3] > 10]
     if not opaque:
         return None
@@ -308,7 +308,7 @@ def _build_block(index: int, base: str, state: tuple[tuple[str, str], ...]) -> B
     return Block(index=index, name=base, mc_id=_mc_id(base, state), rgb=rgb, transparent=transparent, state=state)
 
 
-@lru_cache(maxsize=None)
+@cache
 def _base_block(index: int) -> Block:
     return _build_block(index, _NAMES[index], ())
 

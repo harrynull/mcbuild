@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import time
+from typing import cast
 
 from PIL import Image
 
@@ -19,12 +20,17 @@ def encode_sixel(img: Image.Image, max_colors: int = 255, bg: tuple[int, int, in
     rgba = img.convert("RGBA")
     flat = Image.new("RGB", rgba.size, bg)
     flat.paste(rgba, (0, 0), rgba)
-    quantized = flat.quantize(colors=max_colors, method=Image.MEDIANCUT)
+    quantized = flat.quantize(colors=max_colors, method=Image.Quantize.MEDIANCUT)
     palette = quantized.getpalette() or []
     width, height = quantized.size
     pixels = quantized.load()
+    assert pixels is not None
 
-    used_colors = sorted({pixels[x, y] for y in range(height) for x in range(width)})
+    def pixel(x: int, y: int) -> int:
+        # `quantized` is palette mode ("P"), so indexing always yields a plain int.
+        return cast(int, pixels[x, y])
+
+    used_colors = sorted({pixel(x, y) for y in range(height) for x in range(width)})
 
     # "1;1;<Ph>;<Pv>" raster attributes: 1:1 pixel aspect ratio + explicit image size.
     # Without this many terminals guess the aspect ratio (often 2:1) and stretch/squish
@@ -41,7 +47,7 @@ def encode_sixel(img: Image.Image, max_colors: int = 255, bg: tuple[int, int, in
         colors_in_band: set[int] = set()
         for yy in range(band_h):
             for xx in range(width):
-                colors_in_band.add(pixels[xx, band_y + yy])
+                colors_in_band.add(pixel(xx, band_y + yy))
 
         first = True
         for color in sorted(colors_in_band):
@@ -54,7 +60,7 @@ def encode_sixel(img: Image.Image, max_colors: int = 255, bg: tuple[int, int, in
             for xx in range(width):
                 bits = 0
                 for yy in range(band_h):
-                    if pixels[xx, band_y + yy] == color:
+                    if pixel(xx, band_y + yy) == color:
                         bits |= 1 << yy
                 ch = chr(63 + bits)
                 if ch == run_char:

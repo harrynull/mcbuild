@@ -206,7 +206,9 @@ def build(
                 _hide_reasoning_live(len(data["text"]))
             elif not stream_state["reasoning_hidden_announced"]:
                 # never streamed (non-streaming mode): show it in full, same as before
-                console.print(Panel(f"[dim italic]{data['text']}[/dim italic]", title="reasoning", border_style="grey50"))
+                console.print(
+                    Panel(f"[dim italic]{data['text']}[/dim italic]", title="reasoning", border_style="grey50")
+                )
         elif event_type == "assistant_text":
             if stream_state["content_live"] is not None:
                 stream_state["content_live"].stop()
@@ -241,7 +243,9 @@ def build(
             dims = stats["dims"]
             dims_str = f"{dims[0]}x{dims[1]}x{dims[2]}" if dims else "empty"
             iter_dir = rundir.root / f"iter_{data['iteration']:02d}"
-            console.print(f"[green]render:[/green] {iter_dir / 'render.png'}  dims={dims_str}  blocks={stats['block_count']}")
+            console.print(
+                f"[green]render:[/green] {iter_dir / 'render.png'}  dims={dims_str}  blocks={stats['block_count']}"
+            )
             if (iter_dir / "blueprint.schem").exists():
                 console.print(f"[green]schem:[/green]  {iter_dir / 'blueprint.schem'}")
             _display_image(data["image"], config.display)
@@ -249,7 +253,9 @@ def build(
             if data.get("mode") == "camera":
                 console.print(f"[cyan]inspect (free camera pos={data['camera_pos']} look_at={data['look_at']})[/cyan]")
             elif data.get("slice_axis") is not None:
-                console.print(f"[cyan]inspect view (yaw={data['yaw']}, slice {data['slice_axis']}={data['slice_at']})[/cyan]")
+                console.print(
+                    f"[cyan]inspect view (yaw={data['yaw']}, slice {data['slice_axis']}={data['slice_at']})[/cyan]"
+                )
             else:
                 console.print(f"[cyan]inspect view (yaw={data['yaw']}, cutaway={data.get('cutaway')})[/cyan]")
             _display_image(data["image"], config.display)
@@ -270,7 +276,8 @@ def build(
     console.print(
         Panel(
             f"iterations: {result.iterations}\n"
-            f"prompt tokens: {usage.prompt_tokens}  completion tokens: {usage.completion_tokens}{reasoning_line}{cache_line}\n"
+            f"prompt tokens: {usage.prompt_tokens}  completion tokens: {usage.completion_tokens}"
+            f"{reasoning_line}{cache_line}\n"
             f"cost: ${usage.cost_usd:.4f}",
             title="usage",
             border_style="magenta",
@@ -284,7 +291,9 @@ def build(
 
         last_blueprint = rundir.root / f"iter_{result.iterations:02d}" / "blueprint.py"
         if result.iterations > 0 and last_blueprint.exists():
-            (rundir.root / "final_blueprint.py").write_text(last_blueprint.read_text(encoding="utf-8"), encoding="utf-8")
+            (rundir.root / "final_blueprint.py").write_text(
+                last_blueprint.read_text(encoding="utf-8"), encoding="utf-8"
+            )
     else:
         console.print("[yellow]No successful build to export.[/yellow]")
 

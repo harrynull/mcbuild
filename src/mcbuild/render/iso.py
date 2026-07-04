@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from functools import lru_cache
+from functools import cache
 
 from PIL import Image, ImageChops, ImageDraw
 
@@ -47,7 +47,11 @@ _FACES: dict[str, tuple[list[tuple[int, int]], tuple[int, int], tuple[int, int],
 
 
 def _shade(rgb: tuple[int, int, int], factor: float) -> tuple[int, int, int]:
-    return tuple(min(255, max(0, int(c * factor))) for c in rgb)  # type: ignore[return-value]
+    def scale(c: int) -> int:
+        return min(255, max(0, int(c * factor)))
+
+    r, g, b = rgb
+    return scale(r), scale(g), scale(b)
 
 
 def _shade_image(img: Image.Image, factor: float) -> Image.Image:
@@ -89,7 +93,7 @@ def _draw_textured_face(
     bw, bh = bx1 - bx0, by1 - by0
     local_origin = (origin[0] - bx0, origin[1] - by0)
     coeffs = _affine_coeffs(local_origin, vec_u, vec_v, tex.width, tex.height)
-    warped = tex.transform((bw, bh), Image.AFFINE, coeffs, resample=Image.NEAREST)
+    warped = tex.transform((bw, bh), Image.Transform.AFFINE, coeffs, resample=Image.Resampling.NEAREST)
     warped = _shade_image(warped, shade)
 
     mask = Image.new("L", (bw, bh), 0)
@@ -102,7 +106,7 @@ def _draw_textured_face(
     canvas.alpha_composite(warped_final, (bx0, by0))
 
 
-@lru_cache(maxsize=None)
+@cache
 def _sprite(block_name: str, rgb: tuple[int, int, int], alpha: int) -> Image.Image:
     img = Image.new("RGBA", (TW, TH + WALL), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)

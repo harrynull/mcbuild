@@ -4,7 +4,9 @@ from mcbuild.llm.client import OpenRouterClient, Usage, consume_stream
 
 
 def _chunk(content=None, reasoning=None, reasoning_details=None, tool_calls=None, usage=None):
-    delta = SimpleNamespace(content=content, reasoning=reasoning, reasoning_details=reasoning_details, tool_calls=tool_calls)
+    delta = SimpleNamespace(
+        content=content, reasoning=reasoning, reasoning_details=reasoning_details, tool_calls=tool_calls
+    )
     return SimpleNamespace(choices=[SimpleNamespace(delta=delta)], usage=usage)
 
 
@@ -34,6 +36,7 @@ def test_reasoning_details_separate_indices_stay_separate():
         _chunk(reasoning_details=[{"type": "reasoning.text", "text": "B", "index": 1, "signature": "S1"}]),
     ]
     message, _ = consume_stream(chunks)
+    assert message.reasoning_details is not None
     assert [b["signature"] for b in message.reasoning_details] == ["S0", "S1"]
 
 
@@ -84,6 +87,7 @@ def test_consume_stream_handles_multiple_parallel_tool_calls_by_index():
         _chunk(tool_calls=[_tool_call_delta(1, arguments='"done"}')]),
     ]
     message, usage = consume_stream(chunks)
+    assert message.tool_calls is not None
     assert [tc.id for tc in message.tool_calls] == ["call_a", "call_b"]
     assert message.tool_calls[1].function.arguments == '{"summary":"done"}'
 
@@ -157,7 +161,7 @@ def test_chat_blocking_sends_session_id_as_user_for_sticky_routing():
         message = SimpleNamespace(content="hi", tool_calls=None, reasoning=None, reasoning_details=None)
         return SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=None)
 
-    client._client.chat.completions.create = fake_create
+    client._client.chat.completions.create = fake_create  # ty: ignore[invalid-assignment]
     client.chat(model="anthropic/claude-sonnet-5", messages=[{"role": "user", "content": "hi"}])
 
     assert captured["user"] == "sticky-123"

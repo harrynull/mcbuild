@@ -7,8 +7,9 @@ iso.py), so this module is purely additive.
 
 from __future__ import annotations
 
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
+from typing import cast
 
 from PIL import Image
 
@@ -31,14 +32,14 @@ TINTED_ALL_FACES = {
 }
 
 
-@lru_cache(maxsize=None)
+@cache
 def _load(path: Path) -> Image.Image | None:
     try:
         img = Image.open(path).convert("RGBA")
     except Exception:
         return None
     if img.size != (TEXTURE_SIZE, TEXTURE_SIZE):
-        img = img.resize((TEXTURE_SIZE, TEXTURE_SIZE), Image.NEAREST)
+        img = img.resize((TEXTURE_SIZE, TEXTURE_SIZE), Image.Resampling.NEAREST)
     return img
 
 
@@ -50,7 +51,7 @@ def _candidates(name: str, face: str) -> list[str]:
     return [f"{name}_side", name]
 
 
-@lru_cache(maxsize=None)
+@cache
 def get_face_texture(name: str, face: str) -> Image.Image | None:
     """face is 'top' or 'side'. Returns a 16x16 RGBA image, or None if untextured."""
     for candidate in _candidates(name, face):
@@ -73,8 +74,10 @@ def apply_tint(img: Image.Image, rgb: tuple[int, int, int]) -> Image.Image:
     tinted = Image.new("RGBA", img.size)
     src = img.load()
     dst = tinted.load()
+    assert src is not None and dst is not None
     for y in range(img.height):
         for x in range(img.width):
-            pr, pg, pb, pa = src[x, y]
+            # `img` is RGBA mode, so indexing always yields a 4-tuple.
+            pr, pg, pb, pa = cast(tuple[int, int, int, int], src[x, y])
             dst[x, y] = (pr * r // 255, pg * g // 255, pb * b // 255, pa)
     return tinted

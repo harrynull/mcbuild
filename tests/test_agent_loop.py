@@ -2,7 +2,7 @@ import json
 
 from mcbuild.agent.loop import _with_prompt_caching, run_agent
 from mcbuild.config import Config
-from mcbuild.llm.fake import FakeLLM, _FnCall, _FakeMessage, _ToolCall
+from mcbuild.llm.fake import FakeLLM, _FakeMessage, _FnCall, _ToolCall
 from mcbuild.palette import get_block_by_index
 from mcbuild.rundir import RunDir
 
@@ -84,10 +84,12 @@ def test_agent_loop_emits_turn_start_and_deltas_when_streaming(tmp_path):
             result = super().chat(model, messages, tools=tools, reasoning=reasoning)
             if stream and on_delta:
                 msg = result.message
-                if getattr(msg, "reasoning", None):
-                    on_delta("reasoning", msg.reasoning)
-                if getattr(msg, "content", None):
-                    on_delta("content", msg.content)
+                reasoning = getattr(msg, "reasoning", None)
+                if reasoning:
+                    on_delta("reasoning", reasoning)
+                content = getattr(msg, "content", None)
+                if content:
+                    on_delta("content", content)
             return result
 
     llm = StreamingFakeLLM()
@@ -280,7 +282,9 @@ def test_str_replace_edits_cumulative_source(tmp_path):
 
         def _patch(self):
             # cut a window into the existing wall
-            return _str_replace("clear(2, 1, 0, 2, 2, 0)", "clear(2, 1, 0, 2, 2, 0)\nset_block(2, 2, 4, 'air')", notes="window")
+            return _str_replace(
+                "clear(2, 1, 0, 2, 2, 0)", "clear(2, 1, 0, 2, 2, 0)\nset_block(2, 2, 4, 'air')", notes="window"
+            )
 
     llm = ReplacingFakeLLM()
     config = Config(max_iters=6, seed=1)
@@ -356,9 +360,13 @@ def test_str_replace_submit_false_does_not_spend_budget(tmp_path):
     result = run_agent("hut", llm, config, rundir)
     assert result.finished is True
     assert not any("Edit budget reached" in t for t in _tool_texts(rundir))
+    assert result.grid is not None
     # both the staged (submit=False) edit and the later submitted edit made it into the final grid
-    assert get_block_by_index(result.grid.get(2, 2, 4)).name == "air"
-    assert get_block_by_index(result.grid.get(0, 4, 0)).name == "glass"
+    idx_air = result.grid.get(2, 2, 4)
+    idx_glass = result.grid.get(0, 4, 0)
+    assert idx_air is not None and idx_glass is not None
+    assert get_block_by_index(idx_air).name == "air"
+    assert get_block_by_index(idx_glass).name == "glass"
 
 
 def test_str_replace_old_str_not_found_returns_error(tmp_path):
@@ -582,6 +590,7 @@ def test_edit_region_clears_then_rebuilds_only_the_box(tmp_path):
 
     assert result.finished is True
     grid = result.grid
+    assert grid is not None
     assert grid.get(2, 0, 2) == get_block("glass").index  # center replaced
     assert grid.get(0, 0, 0) == get_block("stone").index  # corner (outside region) frozen
 

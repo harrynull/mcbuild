@@ -32,7 +32,7 @@ class Camera:
 
 
 @lru_cache(maxsize=8192)
-def _texture_array(texture: str, kind: str, tint: bool, rgb: tuple) -> "np.ndarray | None":
+def _texture_array(texture: str, kind: str, tint: bool, rgb: tuple) -> np.ndarray | None:
     face = "top" if kind == "top" else ("bottom" if kind == "bottom" else "side")
     img = textures.get_face_texture(texture, face)
     if img is None:

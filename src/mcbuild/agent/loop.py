@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from PIL import Image
 
@@ -363,7 +364,8 @@ def run_agent(
                     messages.append(
                         _tool_result(
                             tc.id,
-                            "Cannot finish: you must verify the interior with at least one query slice and one inspect cutaway.",
+                            "Cannot finish: you must verify the interior with at least one query slice "
+                            "and one inspect cutaway.",
                         )
                     )
                     continue

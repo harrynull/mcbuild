@@ -64,7 +64,8 @@ STR_REPLACE_TOOL = {
                 },
                 "submit": {
                     "type": "boolean",
-                    "description": "If true (default), build and render after this edit and spend an edit. If false, only stage the text edit (free, no render).",
+                    "description": "If true (default), build and render after this edit and spend an edit. "
+                    "If false, only stage the text edit (free, no render).",
                     "default": True,
                 },
                 "design_notes": {"type": "string", "description": "Brief notes on what this edit changes."},
@@ -219,7 +220,8 @@ FINISH_TOOL = {
                 "summary": {"type": "string", "description": "A short summary of the finished build."},
                 "completed_interior_check": {
                     "type": "boolean",
-                    "description": "True if you verified the interior with at least one query slice and one inspect cutaway.",
+                    "description": "True if you verified the interior with at least one query slice "
+                    "and one inspect cutaway.",
                 }
             },
             "required": ["summary", "completed_interior_check"],

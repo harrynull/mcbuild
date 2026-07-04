@@ -29,6 +29,7 @@ def test_directional_texture_lookup_prefers_face_specific_file():
 def test_grass_block_top_gets_tinted_green():
     assert textures.needs_tint("grass_block", "top")
     raw = textures.get_face_texture("grass_block", "top")
+    assert raw is not None
     tinted = textures.apply_tint(raw, (127, 178, 56))
     # a grayscale tint mask multiplied by a green-dominant color should end up green-dominant
     r, g, b, _ = tinted.split()

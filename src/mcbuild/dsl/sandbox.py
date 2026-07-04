@@ -111,7 +111,7 @@ def compile_blueprint(source: str, filename: str = BLUEPRINT_FILENAME) -> ast.Mo
 
 def run_blueprint(
     source: str,
-    grid: "_voxel.VoxelGrid",
+    grid: _voxel.VoxelGrid,
     seed: int = 0,
     max_lines: int = MAX_LINES,
     max_seconds: float = MAX_SECONDS,

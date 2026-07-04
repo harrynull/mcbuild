@@ -40,6 +40,7 @@ def test_blockstate_variant_match_stairs():
 
 def test_blockstate_multipart_fence_selects_matching_sides():
     parts = blockstate.resolve_parts("oak_fence", {"north": "true", "east": "false", "south": "false", "west": "false"})
+    assert parts is not None
     models = [p.model for p in parts]
     assert any("fence_post" in m for m in models)
     assert any("fence_side" in m for m in models)

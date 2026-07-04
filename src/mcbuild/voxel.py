@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import numpy as np
 
 MAX_BLOCKS = 4_000_000
 MAX_EXTENT = 512
@@ -46,7 +50,7 @@ class VoxelGrid:
         self._blocks.pop((x, y, z), None)
         # Bounds are allowed to be conservative (not shrunk) after a clear.
 
-    def clone(self) -> "VoxelGrid":
+    def clone(self) -> VoxelGrid:
         """Return an independent copy, safe to mutate without affecting this grid.
 
         Blocks are (immutable tuple)->int, so a shallow dict copy is deep enough;
@@ -86,12 +90,14 @@ class VoxelGrid:
         """Return ((minx, miny, minz), (maxx, maxy, maxz)), or None if empty."""
         if self._min is None or self._max is None:
             return None
-        return (tuple(self._min), tuple(self._max))  # type: ignore[return-value]
+        minx, miny, minz = self._min
+        maxx, maxy, maxz = self._max
+        return (minx, miny, minz), (maxx, maxy, maxz)
 
     def items(self) -> Iterator[tuple[Coord, int]]:
         return iter(self._blocks.items())
 
-    def to_dense(self) -> tuple["object", Coord]:
+    def to_dense(self) -> tuple[np.ndarray, Coord]:
         """Return (numpy array of palette indices +1 (0 = air), origin offset)."""
         import numpy as np
 

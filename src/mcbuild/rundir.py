@@ -22,7 +22,7 @@ class RunDir:
     root: Path
 
     @classmethod
-    def create(cls, prompt: str, base: str = "runs") -> "RunDir":
+    def create(cls, prompt: str, base: str = "runs") -> RunDir:
         ts = time.strftime("%Y%m%d-%H%M%S")
         slug = slugify(prompt)
         root = Path(base) / f"{ts}-{slug}"

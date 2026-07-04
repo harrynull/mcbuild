@@ -46,6 +46,10 @@ class FakeLLM:
             self._finish,
         ]
 
+    def generate_image(self, model: str, prompt: str) -> bytes | None:
+        """No-op stand-in: --fake-llm never requests a reference image."""
+        return None
+
     def chat(self, model: str, messages: list[dict], tools=None, reasoning: str = "off", **kwargs) -> ChatResult:
         step = self._script[min(self._step, len(self._script) - 1)]
         self._step += 1

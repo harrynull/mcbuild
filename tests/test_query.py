@@ -64,6 +64,10 @@ def test_ascii_slice_caps_dense_large_footprint():
     grid = VoxelGrid()
     run_blueprint("fill(0,0,0,199,0,1,'stone')", grid)  # 200x1x2 dense floor
     text = query.ascii_slice(grid, "y", 0)
-    lines = [ln for ln in text.splitlines() if ln and not ln.startswith(("slice", "legend", "(")) and set(ln) <= {".", "#"}]
+    lines = [
+        ln
+        for ln in text.splitlines()
+        if ln and not ln.startswith(("slice", "legend", "(")) and set(ln) <= {".", "#"}
+    ]
     assert all(len(row) <= query.MAX_SLICE_DIM for row in lines)
     assert "truncated" in text.lower()

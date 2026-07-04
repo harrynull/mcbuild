@@ -9,8 +9,8 @@ referenced model file (which we don't ship).
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
-from functools import lru_cache
+from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 
 BLOCKSTATE_DIR = Path(__file__).resolve().parent.parent / "assets" / "blockstates"
@@ -23,7 +23,7 @@ class ModelPart:
     y: int = 0  # rotation about the Y axis, degrees
 
 
-@lru_cache(maxsize=None)
+@cache
 def _load_blockstate(name: str) -> dict | None:
     path = BLOCKSTATE_DIR / f"{name}.json"
     if not path.exists():

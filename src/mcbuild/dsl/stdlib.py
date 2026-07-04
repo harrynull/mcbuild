@@ -14,7 +14,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from types import SimpleNamespace
 
-from mcbuild.palette import get_block as _resolve_block, get_block_by_index
+from mcbuild.palette import get_block as _resolve_block
+from mcbuild.palette import get_block_by_index
 from mcbuild.voxel import VoxelGrid
 
 
@@ -398,9 +399,9 @@ def make_stdlib(grid: VoxelGrid, seed: int = 0) -> dict[str, object]:
         ylo, yhi = sorted((int(round(y1)), int(round(y2))))
         zlo, zhi = sorted((int(round(z1)), int(round(z2))))
         for x, y, z in _iter_box(xlo, ylo, zlo, xhi, yhi, zhi):
-            on_x_edge = x == xlo or x == xhi
-            on_y_edge = y == ylo or y == yhi
-            on_z_edge = z == zlo or z == zhi
+            on_x_edge = x in (xlo, xhi)
+            on_y_edge = y in (ylo, yhi)
+            on_z_edge = z in (zlo, zhi)
             # an edge cell lies on at least two of the three pairs of faces
             if (on_x_edge + on_y_edge + on_z_edge) >= 2:
                 _place_block(x, y, z, block)

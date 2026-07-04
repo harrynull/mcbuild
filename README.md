@@ -1,11 +1,36 @@
 # mcbuild
 
-A from-scratch LLM agent that turns a natural-language prompt into a Minecraft
-building. It writes a blueprint program in a sandboxed Python DSL, interprets
-it into voxel data, renders labeled multi-view screenshots with a pure-software
-isometric renderer, and lets a vision-capable LLM (via [OpenRouter](https://openrouter.ai))
-critique its own renders and iterate via tool calls. Final output is a
-WorldEdit-compatible `.schem` file plus a run directory with every artifact.
+**Turn a sentence into a Minecraft build.** A from-scratch LLM agent that writes
+a blueprint program in a sandboxed Python DSL, interprets it into voxel data,
+renders labeled multi-view screenshots with a pure-software isometric renderer,
+and lets a vision-capable LLM critique its own renders and iterate via tool
+calls — until it produces a WorldEdit-ready `.schem` file.
+
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
+![uv](https://img.shields.io/badge/managed%20with-uv-de5fe9)
+![OpenRouter](https://img.shields.io/badge/LLM-OpenRouter-8a2be2)
+
+![Multi-view isometric render of an agent-built mansion](docs/images/mansion-hero.png)
+
+*Four rotations of a mansion built end-to-end from the prompt `"make a mansion"` —
+one of the agent's own self-critique renders, unedited.*
+
+## How it works
+
+```
+prompt ──▶ LLM writes a blueprint (sandboxed Python DSL)
+             │
+             ▼
+        DSL interpreter ──▶ sparse voxel grid
+             │
+             ▼
+     isometric renderer ──▶ labeled multi-view PNG (4 rotations + top-down + cutaways)
+             │
+             ▼
+   vision LLM critiques the render, calls a tool to edit/query/finish
+             │
+             └──── loop until finish() ────▶ WorldEdit .schem + full run directory
+```
 
 ## Install
 
@@ -26,24 +51,27 @@ cp .env.example .env
 uv run mcbuild "a medieval watchtower with interior spiral stairs"
 ```
 
-Options:
+<details>
+<summary><strong>All options</strong></summary>
 
 ```
 mcbuild PROMPT
-  --model TEXT           Vision-capable OpenRouter model id [default: anthropic/claude-sonnet-5]
-  --max-iters INTEGER     [default: 6]
-  --seed INTEGER          [default: 0]
-  --display TEXT          auto|sixel|ansi|off  [default: auto]
-  --out TEXT              Run directory base  [default: runs]
-  --reference/--no-reference   Generate a concept-reference image first  [default: no-reference]
-  --ref-model TEXT        [default: openai/gpt-image-2]
-  --reasoning TEXT        off|low|medium|high  [default: medium]
-  --stream/--no-stream    Stream reasoning/completion text live  [default: stream]
-  --cost-ceiling FLOAT    Abort (keeping the best build so far) once usage cost reaches this many USD
+  --model TEXT                 Vision-capable OpenRouter model id [default: anthropic/claude-sonnet-5]
+  --max-iters INTEGER          [default: 6]
+  --seed INTEGER                [default: 0]
+  --display TEXT                auto|sixel|ansi|off  [default: auto]
+  --out TEXT                    Run directory base  [default: runs]
+  --reference/--no-reference    Generate a concept-reference image first  [default: no-reference]
+  --ref-model TEXT              [default: openai/gpt-image-2]
+  --reasoning TEXT              off|low|medium|high  [default: medium]
+  --stream/--no-stream          Stream reasoning/completion text live  [default: stream]
+  --cost-ceiling FLOAT          Abort (keeping the best build so far) once usage cost reaches this many USD
 ```
 
 `--display auto` probes the terminal for sixel support (via a DA1 query) and
 falls back to ANSI half-block rendering (`rich-pixels`) if unavailable.
+
+</details>
 
 Each run writes to `runs/<timestamp>-<slug>/`:
 
@@ -58,7 +86,7 @@ final_blueprint.py
 session.json            (full message log, for debugging)
 ```
 
-## Offline demo (no API key / no network)
+### Offline demo (no API key / no network)
 
 ```bash
 uv run mcbuild "a tiny stone hut" --fake-llm --max-iters 3
@@ -75,35 +103,6 @@ no dangerous builtins, and a line-count + wall-clock execution budget. See
 [`src/mcbuild/dsl/REFERENCE.md`](src/mcbuild/dsl/REFERENCE.md) for the full
 primitive/transform reference and worked examples.
 
-## Development
-
-```bash
-uv run pytest
-```
-
-Tests cover: sandbox security (imports/dunders/budget), DSL shape primitives,
-palette lookup + suggestions, isometric renderer output, sixel encoding,
-Sponge Schematic v2 round-trip via `nbtlib`, and an offline agent-loop
-integration test (scripted LLM: error -> fix -> finish) via the CLI's
-`--fake-llm` path.
-
-## Project layout
-
-```
-src/mcbuild/
-  cli.py            typer CLI, rich progress feed, sixel/ANSI display
-  config.py         run configuration
-  voxel.py          sparse VoxelGrid
-  palette.py        curated block palette + fuzzy suggestions
-  rundir.py         runs/<timestamp>-<slug>/ artifact management
-  dsl/               sandbox, stdlib primitives, errors, REFERENCE.md
-  render/            mesh rasterizer + free camera, iso contact sheet, sixel encoder,
-                     block geometry (blockmodel/blockstate), textures
-  llm/               OpenRouter client, scripted offline FakeLLM
-  agent/             orchestration loop, prompts, tool schemas, text query views
-  export/            Sponge Schematic v3 (.schem) export
-```
-
 ## Capabilities
 
 - **Incremental editing**: `submit_blueprint` (full rebuild), `str_replace` (find/replace against
@@ -119,6 +118,41 @@ src/mcbuild/
   arbitrary/y-axis slices and a lossless text `query` tool (ASCII floor plans, point lookups,
   material histograms).
 - **`'air'`** is placeable — carves/erases and is exported as `minecraft:air`.
+
+Every iteration's self-critique render is a full contact sheet — four isometric
+rotations, a top-down view, and two axis cutaways, with dimensions/block-count/
+top-materials stats burned into the image:
+
+![Full contact sheet: iso rotations, top-down, and cutaways](docs/images/mansion-contact-sheet.png)
+
+## Project layout
+
+```
+src/mcbuild/
+  cli.py             typer CLI, rich progress feed, sixel/ANSI display
+  config.py          run configuration
+  voxel.py           sparse VoxelGrid
+  palette.py         curated block palette + fuzzy suggestions
+  rundir.py          runs/<timestamp>-<slug>/ artifact management
+  dsl/                sandbox, stdlib primitives, errors, REFERENCE.md
+  render/             mesh rasterizer + free camera, iso contact sheet, sixel encoder,
+                      block geometry (blockmodel/blockstate), textures
+  llm/                OpenRouter client, scripted offline FakeLLM
+  agent/              orchestration loop, prompts, tool schemas, text query views
+  export/             Sponge Schematic v3 (.schem) export
+```
+
+## Development
+
+```bash
+uv run pytest
+```
+
+Tests cover: sandbox security (imports/dunders/budget), DSL shape primitives,
+palette lookup + suggestions, isometric renderer output, sixel encoding,
+Sponge Schematic v2 round-trip via `nbtlib`, and an offline agent-loop
+integration test (scripted LLM: error -> fix -> finish) via the CLI's
+`--fake-llm` path.
 
 ## Notes / limitations
 

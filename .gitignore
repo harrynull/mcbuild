@@ -8,5 +8,8 @@ runs/
 dist/
 build/
 *.png
+!docs/images/*.png
 *.mcmeta
 src/mcbuild/assets/
+.serena/
+.pytest_cache/

@@ -429,6 +429,9 @@ def make_stdlib(grid: VoxelGrid, seed: int = 0) -> dict[str, object]:
         sin=_math.sin,
         cos=_math.cos,
         tan=_math.tan,
+        asin=_math.asin,
+        acos=_math.acos,
+        atan=_math.atan,
         sqrt=_math.sqrt,
         floor=_math.floor,
         ceil=_math.ceil,
@@ -440,6 +443,8 @@ def make_stdlib(grid: VoxelGrid, seed: int = 0) -> dict[str, object]:
         hypot=_math.hypot,
         pow=_math.pow,
         log=_math.log,
+        exp=_math.exp,
+        fabs=_math.fabs,
         e=_math.e,
     )
 

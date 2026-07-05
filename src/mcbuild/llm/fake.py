@@ -1,4 +1,4 @@
-"""Scripted offline LLM: design brief -> broken blueprint -> fixed blueprint -> finish.
+"""Scripted offline LLM: design brief -> broken blueprint -> fixed blueprint -> verify -> finish.
 
 Used by `mcbuild --fake-llm` and the offline integration test so the full agent
 loop (including error-driven self-repair) can be exercised without network access.
@@ -43,6 +43,8 @@ class FakeLLM:
             self._design_brief,
             self._broken_submit,
             self._fixed_submit,
+            self._verify_query,
+            self._verify_inspect,
             self._finish,
         ]
 
@@ -89,6 +91,28 @@ class FakeLLM:
                     ),
                 )
             ],
+        )
+
+    def _verify_query(self) -> _FakeMessage:
+        return _FakeMessage(
+            tool_calls=[
+                _ToolCall(
+                    id="call_verify_query",
+                    function=_FnCall(
+                        name="query", arguments=json.dumps({"mode": "slice", "slice_axis": "y", "slice_at": 0})
+                    ),
+                )
+            ]
+        )
+
+    def _verify_inspect(self) -> _FakeMessage:
+        return _FakeMessage(
+            tool_calls=[
+                _ToolCall(
+                    id="call_verify_inspect",
+                    function=_FnCall(name="inspect", arguments=json.dumps({"yaw": 2, "cutaway": "x"})),
+                )
+            ]
         )
 
     def _finish(self) -> _FakeMessage:

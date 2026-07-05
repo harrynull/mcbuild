@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import difflib
 import json
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -164,6 +166,47 @@ def _grid_delta(before: VoxelGrid, after: VoxelGrid) -> str:
     return f"delta: +{added} added, -{removed} removed, ~{changed} changed; affected region [{region}]."
 
 
+def _closest_window(source: str, old_str: str) -> str:
+    """Find the closest-matching line window in `source` to `old_str`, formatted like
+    BlueprintError's excerpt (">> NNNN | line") for a str_replace-not-found hint.
+    """
+    src_lines = source.splitlines()
+    needle_lines = old_str.splitlines() or [old_str]
+    n = len(needle_lines)
+    if not src_lines or n == 0:
+        return ""
+
+    best_ratio = -1.0
+    best_start = 0
+    matcher = difflib.SequenceMatcher(autojunk=False)
+    matcher.set_seq2(needle_lines)
+    starts = range(len(src_lines) - n + 1) if len(src_lines) >= n else [0]
+    for start in starts:
+        window = src_lines[start : start + n] if len(src_lines) >= n else src_lines
+        matcher.set_seq1(window)
+        ratio = matcher.ratio()
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best_start = start
+
+    match_len = n if len(src_lines) >= n else len(src_lines)
+    lo = max(0, best_start - 1)
+    hi = min(len(src_lines), best_start + match_len + 1)
+    excerpt_lines = []
+    for i in range(lo, hi):
+        marker = ">>" if best_start <= i < best_start + match_len else "  "
+        excerpt_lines.append(f"{marker} {i + 1:4d} | {src_lines[i]}")
+    return "\n".join(excerpt_lines)
+
+
+def _warning_note(grid: VoxelGrid) -> str:
+    """Format any non-fatal palette warnings (aliasing, auto-corrected names) attached to `grid`."""
+    warnings = getattr(grid, "palette_warnings", None) or []
+    if not warnings:
+        return ""
+    return "\n".join(f"[palette warning] {w}" for w in warnings) + "\n"
+
+
 def _cache_block(part: dict) -> dict:
     return {**part, "cache_control": {"type": "ephemeral"}}
 
@@ -253,6 +296,8 @@ def run_agent(
     iteration = 0  # per-attempt artifact counter (includes failed attempts)
     builds_done = 0  # successful builds; the edit budget (config.max_iters) counts these only
     consecutive_failures = 0
+    did_query_slice = False  # True once query(mode="slice") has run against the current build
+    did_inspect_cutaway = False  # True once inspect with a cutaway/slice has run against the current build
 
     def finalize(finished: bool, summary: str) -> AgentResult:
         rundir.write_json("session.json", _sanitize_messages_for_json(messages))
@@ -300,309 +345,374 @@ def run_agent(
 
     # The build-edit budget counts successful builds only (failed attempts and free
     # inspect/query turns don't burn it); llm_turns is a hard stop against runaway loops.
-    while llm_turns < max_llm_turns:
-        llm_turns += 1
-        emit("turn_start")
-        _strip_stale_reasoning(messages)  # keep thinking only on the latest assistant turn
-        result = llm.chat(
-            model=config.model,
-            messages=_with_prompt_caching(messages),
-            tools=tools.ALL_TOOLS,
-            reasoning=config.reasoning,
-            stream=config.stream,
-            on_delta=on_delta,
-        )
-        msg = result.message
-        messages.append(_message_to_dict(msg))
-        emit(
-            "turn_usage",
-            turn=llm_turns,
-            prompt_tokens=result.usage.prompt_tokens,
-            completion_tokens=result.usage.completion_tokens,
-            reasoning_tokens=result.usage.reasoning_tokens,
-            cached_tokens=result.usage.cached_tokens,
-            cache_rate=result.usage.cache_rate,
-            cost_usd=result.usage.cost_usd,
-            cumulative_cost_usd=llm.total_usage.cost_usd,
-        )
+    try:
+        while llm_turns < max_llm_turns:
+            llm_turns += 1
+            emit("turn_start")
+            _strip_stale_reasoning(messages)  # keep thinking only on the latest assistant turn
+            result = llm.chat(
+                model=config.model,
+                messages=_with_prompt_caching(messages),
+                tools=tools.ALL_TOOLS,
+                reasoning=config.reasoning,
+                stream=config.stream,
+                on_delta=on_delta,
+            )
+            msg = result.message
+            messages.append(_message_to_dict(msg))
+            emit(
+                "turn_usage",
+                turn=llm_turns,
+                prompt_tokens=result.usage.prompt_tokens,
+                completion_tokens=result.usage.completion_tokens,
+                reasoning_tokens=result.usage.reasoning_tokens,
+                cached_tokens=result.usage.cached_tokens,
+                cache_rate=result.usage.cache_rate,
+                cost_usd=result.usage.cost_usd,
+                cumulative_cost_usd=llm.total_usage.cost_usd,
+            )
+            rundir.append_jsonl(
+                "usage.jsonl",
+                {
+                    "turn": llm_turns,
+                    "timestamp": time.time(),
+                    "prompt_tokens": result.usage.prompt_tokens,
+                    "completion_tokens": result.usage.completion_tokens,
+                    "reasoning_tokens": result.usage.reasoning_tokens,
+                    "cached_tokens": result.usage.cached_tokens,
+                    "cache_rate": result.usage.cache_rate,
+                    "cost_usd": result.usage.cost_usd,
+                    "cumulative_cost_usd": llm.total_usage.cost_usd,
+                },
+            )
 
-        if config.cost_ceiling is not None and llm.total_usage.cost_usd >= config.cost_ceiling:
-            emit("abort", reason=f"cost ceiling of ${config.cost_ceiling:.2f} reached")
-            return finalize(False, f"Aborted: cost ceiling of ${config.cost_ceiling:.2f} reached.")
+            if config.cost_ceiling is not None and llm.total_usage.cost_usd >= config.cost_ceiling:
+                emit("abort", reason=f"cost ceiling of ${config.cost_ceiling:.2f} reached")
+                return finalize(False, f"Aborted: cost ceiling of ${config.cost_ceiling:.2f} reached.")
 
-        reasoning_text = _extract_reasoning_text(msg)
-        if reasoning_text:
-            emit("reasoning", text=reasoning_text)
-        content_text = getattr(msg, "content", "") or ""
-        if content_text:
-            emit("assistant_text", text=content_text)
+            reasoning_text = _extract_reasoning_text(msg)
+            if reasoning_text:
+                emit("reasoning", text=reasoning_text)
+            content_text = getattr(msg, "content", "") or ""
+            if content_text:
+                emit("assistant_text", text=content_text)
 
-        tool_calls = getattr(msg, "tool_calls", None) or []
-        if not tool_calls:
-            if best_grid is None:
-                nudge = "Please proceed: call submit_blueprint with your design."
-            else:
-                nudge = (
-                    "Please proceed: refine with str_replace or edit_region, verify with "
-                    "inspect/query (free), or call finish() if the build is done."
-                )
-            messages.append({"role": "user", "content": nudge})
-            continue
-
-        finished = False
-        finish_summary = ""
-
-        for tc in tool_calls:
-            name = tc.function.name
-            args = _safe_json_loads(tc.function.arguments)
-
-            if name == "finish":
-                if args.get("completed_interior_check") is not True:
-                    messages.append(
-                        _tool_result(
-                            tc.id,
-                            "Cannot finish: you must verify the interior with at least one query slice "
-                            "and one inspect cutaway.",
-                        )
-                    )
-                    continue
-
-                finished = True
-                finish_summary = args.get("summary", "")
-                messages.append(_tool_result(tc.id, "Build finished."))
-                emit("finish", summary=finish_summary)
-                break
-
-            if name == "submit_blueprint":
-                if builds_done >= config.max_iters:
-                    messages.append(
-                        _tool_result(
-                            tc.id,
-                            "Edit budget reached — no edits remaining. Call finish() to export your best "
-                            "build (further build calls are ignored).",
-                        )
-                    )
-                    continue
-                iteration += 1
-                code = args.get("code", "")
-                design_notes = args.get("design_notes", "")
-                iter_dir = rundir.iter_dir(iteration)
-                (iter_dir / "blueprint.py").write_text(code, encoding="utf-8")
-                emit("submit_blueprint", iteration=iteration, design_notes=design_notes, code=code)
-
-                grid = VoxelGrid()
-                try:
-                    sandbox.run_blueprint(code, grid, seed=config.seed)
-                except BlueprintError as e:
-                    consecutive_failures += 1
-                    emit("blueprint_error", iteration=iteration, error=str(e))
-                    messages.append(_tool_result(tc.id, f"Blueprint failed (this did NOT use an edit):\n{e}"))
-                    if consecutive_failures >= config.max_consecutive_failures:
-                        emit("abort", reason="too many consecutive blueprint failures")
-                        return finalize(False, "Aborted after repeated blueprint failures.")
-                    continue
-
-                consecutive_failures = 0
-                builds_done += 1
-                cumulative_source = code  # a full submit RESETS the construction history
-                best_grid, best_stats = grid, report_success(grid, iteration, iter_dir, tc, note=budget_line())
-                continue
-
-            if name == "edit_region":
+            tool_calls = getattr(msg, "tool_calls", None) or []
+            if not tool_calls:
                 if best_grid is None:
-                    messages.append(_tool_result(tc.id, f"No build exists yet; call submit_blueprint before {name}."))
-                    continue
-                if builds_done >= config.max_iters:
-                    messages.append(
-                        _tool_result(
-                            tc.id,
-                            "Edit budget reached — no edits remaining. Call finish() to export your best "
-                            "build (further build calls are ignored).",
-                        )
-                    )
-                    continue
-
-                iteration += 1
-                code = args.get("code", "")
-                design_notes = args.get("design_notes", "")
-                region = args.get("region")
-                iter_dir = rundir.iter_dir(iteration)
-                (iter_dir / "patch.py").write_text(code, encoding="utf-8")
-                emit(name, iteration=iteration, design_notes=design_notes, code=code, region=region)
-
-                # Run against a CLONE so a failing patch never corrupts the current build.
-                candidate = best_grid.clone()
-                if region is not None:
-                    _clear_region(candidate, region)
-                try:
-                    sandbox.run_blueprint(code, candidate, seed=config.seed)
-                except BlueprintError as e:
-                    consecutive_failures += 1
-                    emit("blueprint_error", iteration=iteration, error=str(e))
-                    messages.append(_tool_result(tc.id, f"{name} failed (this did NOT use an edit):\n{e}"))
-                    if consecutive_failures >= config.max_consecutive_failures:
-                        emit("abort", reason="too many consecutive blueprint failures")
-                        return finalize(False, "Aborted after repeated blueprint failures.")
-                    continue
-
-                consecutive_failures = 0
-                builds_done += 1
-                delta = _grid_delta(best_grid, candidate)
-                header = f"\n\n# --- {name}" + (f" region={region}" if region else "") + " ---\n"
-                cumulative_source = cumulative_source + header + code
-                (iter_dir / "blueprint.py").write_text(cumulative_source, encoding="utf-8")
-                best_grid, best_stats = (
-                    candidate,
-                    report_success(candidate, iteration, iter_dir, tc, note=delta + "\n" + budget_line()),
-                )
-                continue
-
-            if name == "str_replace":
-                if best_grid is None:
-                    messages.append(
-                        _tool_result(tc.id, "No build exists yet; call submit_blueprint before str_replace.")
-                    )
-                    continue
-
-                old_str = args.get("old_str", "")
-                new_str = args.get("new_str", "")
-                design_notes = args.get("design_notes", "")
-                submit = args.get("submit", True)
-
-                occurrences = cumulative_source.count(old_str) if old_str else 0
-                if occurrences == 0:
-                    messages.append(
-                        _tool_result(
-                            tc.id,
-                            "str_replace failed (this did NOT use an edit): old_str not found in the "
-                            "current blueprint source. It must match exactly, whitespace included.",
-                        )
-                    )
-                    continue
-                if occurrences > 1:
-                    messages.append(
-                        _tool_result(
-                            tc.id,
-                            f"str_replace failed (this did NOT use an edit): old_str matches {occurrences} "
-                            "locations in the current source. Include more surrounding context to make it unique.",
-                        )
-                    )
-                    continue
-
-                new_source = cumulative_source.replace(old_str, new_str, 1)
-
-                if not submit:
-                    cumulative_source = new_source
-                    messages.append(
-                        _tool_result(
-                            tc.id,
-                            "Edit staged (free, not built/rendered yet). Call str_replace with submit=true "
-                            "(or submit_blueprint) when ready to build the accumulated edits.",
-                        )
-                    )
-                    continue
-
-                if builds_done >= config.max_iters:
-                    messages.append(
-                        _tool_result(
-                            tc.id,
-                            "Edit budget reached — no edits remaining. Call finish() to export your best "
-                            "build (further build calls are ignored).",
-                        )
-                    )
-                    continue
-
-                iteration += 1
-                iter_dir = rundir.iter_dir(iteration)
-                (iter_dir / "blueprint.py").write_text(new_source, encoding="utf-8")
-                emit("str_replace", iteration=iteration, design_notes=design_notes, code=new_source)
-
-                candidate = VoxelGrid()
-                try:
-                    sandbox.run_blueprint(new_source, candidate, seed=config.seed)
-                except BlueprintError as e:
-                    consecutive_failures += 1
-                    emit("blueprint_error", iteration=iteration, error=str(e))
-                    messages.append(_tool_result(tc.id, f"str_replace failed (this did NOT use an edit):\n{e}"))
-                    if consecutive_failures >= config.max_consecutive_failures:
-                        emit("abort", reason="too many consecutive blueprint failures")
-                        return finalize(False, "Aborted after repeated blueprint failures.")
-                    continue
-
-                consecutive_failures = 0
-                builds_done += 1
-                delta = _grid_delta(best_grid, candidate)
-                cumulative_source = new_source
-                best_grid, best_stats = (
-                    candidate,
-                    report_success(candidate, iteration, iter_dir, tc, note=delta + "\n" + budget_line()),
-                )
-                continue
-
-            if name == "inspect":
-                if best_grid is None:
-                    messages.append(_tool_result(tc.id, "Nothing has been built yet; call submit_blueprint first."))
-                    continue
-                yaw = int(args.get("yaw", 0) or 0)
-                cutaway = args.get("cutaway", "none")
-                slice_axis = args.get("slice_axis")
-                slice_at = args.get("slice_at")
-                camera_pos = args.get("camera_pos")
-                look_at = args.get("look_at")
-                if camera_pos is not None and look_at is not None:
-                    try:
-                        cam = Camera(position=tuple(camera_pos), look_at=tuple(look_at))
-                        img = render_from_camera(best_grid, cam)
-                    except CameraRenderError as e:
-                        messages.append(_tool_result(tc.id, f"Free-camera inspect failed: {e}"))
-                        continue
-                    label = f"Free-camera inspection (camera_pos={camera_pos}, look_at={look_at}):"
-                    emit("inspect", mode="camera", camera_pos=camera_pos, look_at=look_at, image=img)
-                elif slice_axis is not None and slice_at is not None:
-                    img = render_iso(best_grid, yaw=yaw, slice_spec=(slice_axis, int(slice_at)))
-                    label = f"Inspection view (yaw={yaw}, slice {slice_axis}={int(slice_at)}):"
-                    emit("inspect", yaw=yaw, slice_axis=slice_axis, slice_at=int(slice_at), image=img)
+                    nudge = "Please proceed: call submit_blueprint with your design."
                 else:
-                    clip = None if cutaway in (None, "none") else cutaway
-                    img = render_iso(best_grid, yaw=yaw, clip=clip)
-                    label = f"Inspection view (yaw={yaw}, cutaway={cutaway}):"
-                    emit("inspect", yaw=yaw, cutaway=cutaway, image=img)
-                messages.append(_tool_result(tc.id, "Inspection render attached in the next message."))
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": label},
-                            {"type": "image_url", "image_url": {"url": image_to_data_url(img)}},
-                        ],
-                    }
-                )
+                    nudge = (
+                        "Please proceed: refine with str_replace or edit_region, verify with "
+                        "inspect/query (free), or call finish() if the build is done."
+                    )
+                messages.append({"role": "user", "content": nudge})
                 continue
 
-            if name == "query":
-                if best_grid is None:
-                    messages.append(_tool_result(tc.id, "Nothing has been built yet; call submit_blueprint first."))
+            finished = False
+            finish_summary = ""
+
+            for tc in tool_calls:
+                name = tc.function.name
+                args = _safe_json_loads(tc.function.arguments)
+
+                if name == "finish":
+                    missing = []
+                    if not did_query_slice:
+                        missing.append("a query(mode='slice') call")
+                    if not did_inspect_cutaway:
+                        missing.append("an inspect call with a cutaway or slice")
+                    if missing:
+                        messages.append(
+                            _tool_result(
+                                tc.id,
+                                "Cannot finish: you still need " + " and ".join(missing) + " against the CURRENT "
+                                "build. (Any build/edit resets this requirement — verify again after your last "
+                                "change.)",
+                            )
+                        )
+                        continue
+
+                    finished = True
+                    finish_summary = args.get("summary", "")
+                    messages.append(_tool_result(tc.id, "Build finished."))
+                    emit("finish", summary=finish_summary)
+                    break
+
+                if name == "submit_blueprint":
+                    if builds_done >= config.max_iters:
+                        messages.append(
+                            _tool_result(
+                                tc.id,
+                                "Edit budget reached — no edits remaining. Call finish() to export your best "
+                                "build (further build calls are ignored).",
+                            )
+                        )
+                        continue
+                    iteration += 1
+                    code = args.get("code", "")
+                    design_notes = args.get("design_notes", "")
+                    iter_dir = rundir.iter_dir(iteration)
+                    (iter_dir / "blueprint.py").write_text(code, encoding="utf-8")
+                    emit("submit_blueprint", iteration=iteration, design_notes=design_notes, code=code)
+
+                    grid = VoxelGrid()
+                    try:
+                        sandbox.run_blueprint(code, grid, seed=config.seed)
+                    except BlueprintError as e:
+                        consecutive_failures += 1
+                        emit("blueprint_error", iteration=iteration, error=str(e))
+                        messages.append(_tool_result(tc.id, f"Blueprint failed (this did NOT use an edit):\n{e}"))
+                        if consecutive_failures >= config.max_consecutive_failures:
+                            emit("abort", reason="too many consecutive blueprint failures")
+                            return finalize(False, "Aborted after repeated blueprint failures.")
+                        continue
+
+                    consecutive_failures = 0
+                    builds_done += 1
+                    did_query_slice = False
+                    did_inspect_cutaway = False
+                    cumulative_source = code  # a full submit RESETS the construction history
+                    best_grid, best_stats = (
+                        grid,
+                        report_success(grid, iteration, iter_dir, tc, note=_warning_note(grid) + budget_line()),
+                    )
                     continue
-                mode = args.get("mode")
-                try:
-                    if mode == "slice":
-                        text = query.ascii_slice(best_grid, args.get("slice_axis", "y"), int(args.get("slice_at", 0)))
-                    elif mode == "point":
-                        text = query.point_query(best_grid, args.get("x", 0), args.get("y", 0), args.get("z", 0))
-                    elif mode == "histogram":
-                        text = query.material_histogram(best_grid, args.get("region"))
+
+                if name == "edit_region":
+                    if best_grid is None:
+                        messages.append(
+                            _tool_result(tc.id, f"No build exists yet; call submit_blueprint before {name}.")
+                        )
+                        continue
+                    if builds_done >= config.max_iters:
+                        messages.append(
+                            _tool_result(
+                                tc.id,
+                                "Edit budget reached — no edits remaining. Call finish() to export your best "
+                                "build (further build calls are ignored).",
+                            )
+                        )
+                        continue
+
+                    iteration += 1
+                    code = args.get("code", "")
+                    design_notes = args.get("design_notes", "")
+                    region = args.get("region")
+                    iter_dir = rundir.iter_dir(iteration)
+                    (iter_dir / "patch.py").write_text(code, encoding="utf-8")
+                    emit(name, iteration=iteration, design_notes=design_notes, code=code, region=region)
+
+                    # Run against a CLONE so a failing patch never corrupts the current build.
+                    candidate = best_grid.clone()
+                    if region is not None:
+                        _clear_region(candidate, region)
+                    try:
+                        sandbox.run_blueprint(code, candidate, seed=config.seed)
+                    except BlueprintError as e:
+                        consecutive_failures += 1
+                        emit("blueprint_error", iteration=iteration, error=str(e))
+                        messages.append(_tool_result(tc.id, f"{name} failed (this did NOT use an edit):\n{e}"))
+                        if consecutive_failures >= config.max_consecutive_failures:
+                            emit("abort", reason="too many consecutive blueprint failures")
+                            return finalize(False, "Aborted after repeated blueprint failures.")
+                        continue
+
+                    consecutive_failures = 0
+                    builds_done += 1
+                    did_query_slice = False
+                    did_inspect_cutaway = False
+                    delta = _grid_delta(best_grid, candidate)
+                    header = f"\n\n# --- {name}" + (f" region={region}" if region else "") + " ---\n"
+                    cumulative_source = cumulative_source + header + code
+                    (iter_dir / "blueprint.py").write_text(cumulative_source, encoding="utf-8")
+                    best_grid, best_stats = (
+                        candidate,
+                        report_success(
+                            candidate,
+                            iteration,
+                            iter_dir,
+                            tc,
+                            note=_warning_note(candidate) + delta + "\n" + budget_line(),
+                        ),
+                    )
+                    continue
+
+                if name == "str_replace":
+                    if best_grid is None:
+                        messages.append(
+                            _tool_result(tc.id, "No build exists yet; call submit_blueprint before str_replace.")
+                        )
+                        continue
+
+                    old_str = args.get("old_str", "")
+                    new_str = args.get("new_str", "")
+                    design_notes = args.get("design_notes", "")
+                    submit = args.get("submit", True)
+
+                    occurrences = cumulative_source.count(old_str) if old_str else 0
+                    if occurrences == 0:
+                        closest = _closest_window(cumulative_source, old_str) if old_str else ""
+                        hint = f"\nClosest match found in current source:\n{closest}" if closest else ""
+                        messages.append(
+                            _tool_result(
+                                tc.id,
+                                "str_replace failed (this did NOT use an edit): old_str not found in the "
+                                "current blueprint source. It must match exactly, whitespace included."
+                                f"{hint}\nTip: call query(mode='source') to fetch the exact current source "
+                                "instead of guessing.",
+                            )
+                        )
+                        continue
+                    if occurrences > 1:
+                        messages.append(
+                            _tool_result(
+                                tc.id,
+                                f"str_replace failed (this did NOT use an edit): old_str matches {occurrences} "
+                                "locations in the current source. Include more surrounding context to make it unique.",
+                            )
+                        )
+                        continue
+
+                    new_source = cumulative_source.replace(old_str, new_str, 1)
+
+                    if not submit:
+                        cumulative_source = new_source
+                        messages.append(
+                            _tool_result(
+                                tc.id,
+                                "Edit staged (free, not built/rendered yet). Call str_replace with submit=true "
+                                "(or submit_blueprint) when ready to build the accumulated edits.",
+                            )
+                        )
+                        continue
+
+                    if builds_done >= config.max_iters:
+                        messages.append(
+                            _tool_result(
+                                tc.id,
+                                "Edit budget reached — no edits remaining. Call finish() to export your best "
+                                "build (further build calls are ignored).",
+                            )
+                        )
+                        continue
+
+                    iteration += 1
+                    iter_dir = rundir.iter_dir(iteration)
+                    (iter_dir / "blueprint.py").write_text(new_source, encoding="utf-8")
+                    emit("str_replace", iteration=iteration, design_notes=design_notes, code=new_source)
+
+                    candidate = VoxelGrid()
+                    try:
+                        sandbox.run_blueprint(new_source, candidate, seed=config.seed)
+                    except BlueprintError as e:
+                        consecutive_failures += 1
+                        emit("blueprint_error", iteration=iteration, error=str(e))
+                        messages.append(_tool_result(tc.id, f"str_replace failed (this did NOT use an edit):\n{e}"))
+                        if consecutive_failures >= config.max_consecutive_failures:
+                            emit("abort", reason="too many consecutive blueprint failures")
+                            return finalize(False, "Aborted after repeated blueprint failures.")
+                        continue
+
+                    consecutive_failures = 0
+                    builds_done += 1
+                    did_query_slice = False
+                    did_inspect_cutaway = False
+                    delta = _grid_delta(best_grid, candidate)
+                    cumulative_source = new_source
+                    best_grid, best_stats = (
+                        candidate,
+                        report_success(
+                            candidate,
+                            iteration,
+                            iter_dir,
+                            tc,
+                            note=_warning_note(candidate) + delta + "\n" + budget_line(),
+                        ),
+                    )
+                    continue
+
+                if name == "inspect":
+                    if best_grid is None:
+                        messages.append(_tool_result(tc.id, "Nothing has been built yet; call submit_blueprint first."))
+                        continue
+                    yaw = int(args.get("yaw", 0) or 0)
+                    cutaway = args.get("cutaway", "none")
+                    slice_axis = args.get("slice_axis")
+                    slice_at = args.get("slice_at")
+                    camera_pos = args.get("camera_pos")
+                    look_at = args.get("look_at")
+                    if camera_pos is not None and look_at is not None:
+                        try:
+                            cam = Camera(position=tuple(camera_pos), look_at=tuple(look_at))
+                            img = render_from_camera(best_grid, cam)
+                        except CameraRenderError as e:
+                            messages.append(_tool_result(tc.id, f"Free-camera inspect failed: {e}"))
+                            continue
+                        label = f"Free-camera inspection (camera_pos={camera_pos}, look_at={look_at}):"
+                        emit("inspect", mode="camera", camera_pos=camera_pos, look_at=look_at, image=img)
+                    elif slice_axis is not None and slice_at is not None:
+                        img = render_iso(best_grid, yaw=yaw, slice_spec=(slice_axis, int(slice_at)))
+                        label = f"Inspection view (yaw={yaw}, slice {slice_axis}={int(slice_at)}):"
+                        did_inspect_cutaway = True
+                        emit("inspect", yaw=yaw, slice_axis=slice_axis, slice_at=int(slice_at), image=img)
                     else:
-                        text = f"Unknown query mode '{mode}'. Use slice, point, or histogram."
-                except (ValueError, TypeError) as e:
-                    text = f"query failed: {e}"
-                emit("query", mode=mode, text=text)
-                messages.append(_tool_result(tc.id, text))
-                continue
+                        clip = None if cutaway in (None, "none") else cutaway
+                        img = render_iso(best_grid, yaw=yaw, clip=clip)
+                        label = f"Inspection view (yaw={yaw}, cutaway={cutaway}):"
+                        if clip is not None:
+                            did_inspect_cutaway = True
+                        emit("inspect", yaw=yaw, cutaway=cutaway, image=img)
+                    messages.append(_tool_result(tc.id, "Inspection render attached in the next message."))
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": label},
+                                {"type": "image_url", "image_url": {"url": image_to_data_url(img)}},
+                            ],
+                        }
+                    )
+                    continue
 
-            messages.append(_tool_result(tc.id, f"Unknown tool '{name}'."))
+                if name == "query":
+                    if best_grid is None:
+                        messages.append(_tool_result(tc.id, "Nothing has been built yet; call submit_blueprint first."))
+                        continue
+                    mode = args.get("mode")
+                    try:
+                        if mode == "slice":
+                            text = query.ascii_slice(
+                                best_grid, args.get("slice_axis", "y"), int(args.get("slice_at", 0))
+                            )
+                            did_query_slice = True
+                        elif mode == "point":
+                            text = query.point_query(best_grid, args.get("x", 0), args.get("y", 0), args.get("z", 0))
+                        elif mode == "histogram":
+                            text = query.material_histogram(best_grid, args.get("region"))
+                        elif mode == "source":
+                            lines = cumulative_source.splitlines()
+                            text = "\n".join(f"{i + 1:4d} | {line}" for i, line in enumerate(lines)) or "(empty source)"
+                        else:
+                            text = f"Unknown query mode '{mode}'. Use slice, point, histogram, or source."
+                    except (ValueError, TypeError) as e:
+                        text = f"query failed: {e}"
+                    emit("query", mode=mode, text=text)
+                    messages.append(_tool_result(tc.id, text))
+                    continue
 
-        rundir.write_json("session.json", _sanitize_messages_for_json(messages))
-        if finished:
-            return finalize(True, finish_summary)
+                messages.append(_tool_result(tc.id, f"Unknown tool '{name}'."))
 
-    return finalize(False, "Stopped without an explicit finish (edit budget or turn limit reached).")
+            rundir.write_json("session.json", _sanitize_messages_for_json(messages))
+            if finished:
+                return finalize(True, finish_summary)
+
+        return finalize(False, "Stopped without an explicit finish (edit budget or turn limit reached).")
+    except BaseException as e:
+        if isinstance(e, KeyboardInterrupt):
+            reason = "aborted: user interrupted (KeyboardInterrupt)"
+        else:
+            reason = f"unhandled exception: {type(e).__name__}: {e}"
+        emit("abort", reason=reason)
+        finalize(False, reason)
+        raise

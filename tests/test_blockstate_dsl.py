@@ -31,7 +31,7 @@ def test_distinct_states_get_distinct_indices():
 
 def test_invalid_base_name_still_raises():
     with pytest.raises(PaletteError):
-        get_block("oak_stairz[facing=north]")
+        get_block("totally_bogus_block_xyz[facing=north]")
 
 
 def test_stateful_block_is_renderable_via_base_material():

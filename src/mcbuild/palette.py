@@ -26,6 +26,35 @@ REGISTRY_PATH = Path(__file__).resolve().parent / "assets" / "minecraft_block_re
 # entries are obscure technical variants with no build use.
 _EXCLUDED_NAMES = {"cave_air", "void_air", "structure_void"}
 
+# Common non-canonical / renamed block names an LLM might emit, mapped to the
+# registry's actual name. Consulted in get_block() before the registry lookup fails.
+ALIAS: dict[str, str] = {
+    "grass": "short_grass",
+    "redstone_repeater": "repeater",
+    "redstone_comparator": "comparator",
+    "glow_berries": "cave_vines",
+    "iron_chain": "chain",  # 1.21.9-era name; registry/exports target 1.21.1's "chain"
+    "sign": "oak_sign",
+    "wall_sign": "oak_wall_sign",
+    "stone_slab": "smooth_stone_slab",
+    "grass_path": "dirt_path",
+}
+
+# Non-fatal palette warnings collected during a single blueprint execution (aliasing,
+# confident fuzzy-match auto-correction). Reset at the start of each sandbox run and
+# flushed onto the grid after a successful build.
+_warnings: list[str] = []
+
+
+def reset_warnings() -> None:
+    _warnings.clear()
+
+
+def pop_warnings() -> list[str]:
+    out = list(_warnings)
+    _warnings.clear()
+    return out
+
 
 @dataclass(frozen=True)
 class Block:
@@ -196,6 +225,7 @@ _CURATED: dict[str, tuple[tuple[int, int, int], bool]] = {
     "ice": ((140, 179, 237), True),
     "packed_ice": ((141, 180, 238), False),
     "iron_block": ((220, 220, 220), False),
+    "chain": ((66, 66, 66), False),
     "gold_block": ((247, 223, 82), False),
     "diamond_block": ((98, 237, 220), False),
     "emerald_block": ((60, 178, 90), False),
@@ -320,11 +350,21 @@ def get_block(name: str) -> Block:
     states are preserved for rendering and export but not individually validated.
     """
     base, state = _parse_name(name)
+    aliased = ALIAS.get(base)
+    if aliased is not None:
+        _warnings.append(f"'{base}' is not a valid block name; substituted alias '{aliased}'.")
+        base = aliased
     index = _NAME_TO_INDEX.get(base)
     if index is None:
-        suggestions = suggest(base)
-        hint = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
-        raise PaletteError(f"Unknown block '{base}'.{hint}")
+        match = _confident_match(base)
+        if match is not None:
+            _warnings.append(f"Unknown block '{base}'; auto-corrected to close match '{match}'.")
+            base = match
+            index = _NAME_TO_INDEX[base]
+        else:
+            suggestions = suggest(base)
+            hint = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
+            raise PaletteError(f"Unknown block '{base}'.{hint}")
     if not state:
         return _base_block(index)
 
@@ -345,6 +385,12 @@ def get_block_by_index(index: int) -> Block:
 
 def suggest(name: str, n: int = 3) -> list[str]:
     return difflib.get_close_matches(name, _NAMES, n=n, cutoff=0.4)
+
+
+def _confident_match(name: str) -> str | None:
+    """A single close match at a strict cutoff — confident enough to auto-substitute."""
+    hits = difflib.get_close_matches(name, _NAMES, n=1, cutoff=0.82)
+    return hits[0] if hits else None
 
 
 def all_block_names() -> list[str]:

@@ -49,6 +49,13 @@ class RunDir:
     def write_json(self, name: str, data: Any) -> Path:
         return self.write_text(name, json.dumps(data, indent=2, default=str))
 
+    def append_jsonl(self, name: str, record: dict) -> Path:
+        """Append one JSON object as a line to a .jsonl file (creates it on first call)."""
+        p = self.path(name)
+        with p.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, default=str) + "\n")
+        return p
+
     def save_image(self, name: str, img: Image.Image) -> Path:
         p = self.path(name)
         img.save(p)

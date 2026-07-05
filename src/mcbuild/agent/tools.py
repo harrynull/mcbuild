@@ -47,9 +47,12 @@ STR_REPLACE_TOOL = {
             "e.g. fix three unrelated spots — before spending a render on the combined result; "
             "the staged edits apply in order and the next str_replace/submit_blueprint call with "
             "submit=true (or the plain submit_blueprint tool) builds whatever has accumulated. "
-            "On a submitted error the pre-edit build is left untouched and you get a line-mapped "
-            "traceback against the patched source. On success you get updated stats and a fresh "
-            "contact-sheet render. Requires a prior successful submit_blueprint."
+            "If old_str isn't found, the error includes the closest matching lines, but if you're "
+            "unsure of the exact current text, call query(mode='source') first to fetch fresh "
+            "ground truth rather than guessing. On a submitted error the pre-edit build is left "
+            "untouched and you get a line-mapped traceback against the patched source. On success "
+            "you get updated stats and a fresh contact-sheet render. Requires a prior successful "
+            "submit_blueprint."
         ),
         "parameters": {
             "type": "object",
@@ -180,14 +183,15 @@ QUERY_TOOL = {
             "'slice' returns a one-char-per-block ASCII plan of a plane (use slice_axis + "
             "slice_at; slice_axis='y' gives a floor plan of that storey) with a material "
             "legend; 'point' returns the exact block at (x, y, z); 'histogram' returns material "
-            "counts, optionally within a region. Prefer this over inspect when you need to "
-            "verify exact block placement or interior layout — text is more reliable than a "
-            "small render."
+            "counts, optionally within a region; 'source' returns the full current blueprint "
+            "source, line-numbered — use this instead of guessing at old_str when a str_replace "
+            "call fails to match. Prefer this tool over inspect when you need to verify exact "
+            "block placement or interior layout — text is more reliable than a small render."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "mode": {"type": "string", "enum": ["slice", "point", "histogram"]},
+                "mode": {"type": "string", "enum": ["slice", "point", "histogram", "source"]},
                 "slice_axis": {"type": "string", "enum": ["x", "y", "z"], "description": "For mode=slice."},
                 "slice_at": {"type": "integer", "description": "World coord of the slice plane, for mode=slice."},
                 "x": {"type": "integer", "description": "For mode=point."},
@@ -211,20 +215,16 @@ FINISH_TOOL = {
     "function": {
         "name": "finish",
         "description": (
-            "Declare the build complete and end the session. "
-            "Before finishing, verify the interior with at least one query slice and one inspect cutaway."
+            "Declare the build complete and end the session. Before finishing, you must have "
+            "already called query(mode='slice') and inspect(...) with a cutaway/slice against "
+            "the CURRENT build (any subsequent edit resets this requirement)."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "summary": {"type": "string", "description": "A short summary of the finished build."},
-                "completed_interior_check": {
-                    "type": "boolean",
-                    "description": "True if you verified the interior with at least one query slice "
-                    "and one inspect cutaway.",
-                },
             },
-            "required": ["summary", "completed_interior_check"],
+            "required": ["summary"],
         },
     },
 }

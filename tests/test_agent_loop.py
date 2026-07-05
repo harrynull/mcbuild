@@ -101,7 +101,8 @@ def test_agent_loop_emits_turn_start_and_deltas_when_streaming(tmp_path):
 
     assert result.finished is True
     event_types = [e[0] for e in events]
-    assert event_types.count("turn_start") == 4  # design brief, broken submit, fixed submit, finish
+    # design brief, broken submit, fixed submit, verify query, verify inspect, finish
+    assert event_types.count("turn_start") == 6
     assert "reasoning_delta" in event_types
     assert "content_delta" in event_types
 
@@ -184,6 +185,8 @@ def test_budget_caps_successful_builds(tmp_path):
                 self._fixed_submit,  # build 1
                 self._patch,  # build 2 (budget=2 reached)
                 self._patch,  # should be REJECTED (budget exhausted)
+                self._verify_query,
+                self._verify_inspect,
                 self._finish_ok,
             ]
 
@@ -206,7 +209,14 @@ def test_failed_build_does_not_consume_budget(tmp_path):
     class FailThenBuildLLM(FakeLLM):
         def __init__(self):
             super().__init__()
-            self._script = [self._broken_submit, self._fixed_submit, self._patch, self._finish_ok]
+            self._script = [
+                self._broken_submit,
+                self._fixed_submit,
+                self._patch,
+                self._verify_query,
+                self._verify_inspect,
+                self._finish_ok,
+            ]
 
         def _patch(self):
             return _str_replace("clear(2, 1, 0, 2, 2, 0)", "clear(2, 1, 0, 2, 2, 0)\nset_block(0, 4, 0, 'glass')")
@@ -276,7 +286,14 @@ def test_str_replace_edits_cumulative_source(tmp_path):
     class ReplacingFakeLLM(FakeLLM):
         def __init__(self):
             super().__init__()
-            self._script = [self._design_brief, self._fixed_submit, self._patch, self._finish]
+            self._script = [
+                self._design_brief,
+                self._fixed_submit,
+                self._patch,
+                self._verify_query,
+                self._verify_inspect,
+                self._finish,
+            ]
 
         def _patch(self):
             # cut a window into the existing wall
@@ -301,7 +318,14 @@ def test_str_replace_submit_false_stages_without_building(tmp_path):
     class StagingLLM(FakeLLM):
         def __init__(self):
             super().__init__()
-            self._script = [self._design_brief, self._fixed_submit, self._stage, self._finish]
+            self._script = [
+                self._design_brief,
+                self._fixed_submit,
+                self._stage,
+                self._verify_query,
+                self._verify_inspect,
+                self._finish,
+            ]
 
         def _stage(self):
             return _str_replace(
@@ -333,7 +357,14 @@ def test_str_replace_submit_false_does_not_spend_budget(tmp_path):
     class StageThenBuildLLM(FakeLLM):
         def __init__(self):
             super().__init__()
-            self._script = [self._fixed_submit, self._stage, self._build, self._finish_ok]
+            self._script = [
+                self._fixed_submit,
+                self._stage,
+                self._build,
+                self._verify_query,
+                self._verify_inspect,
+                self._finish_ok,
+            ]
 
         def _stage(self):
             return _str_replace(
@@ -371,7 +402,14 @@ def test_str_replace_old_str_not_found_returns_error(tmp_path):
     class BadAnchorLLM(FakeLLM):
         def __init__(self):
             super().__init__()
-            self._script = [self._design_brief, self._fixed_submit, self._patch, self._finish]
+            self._script = [
+                self._design_brief,
+                self._fixed_submit,
+                self._patch,
+                self._verify_query,
+                self._verify_inspect,
+                self._finish,
+            ]
 
         def _patch(self):
             return _str_replace("this text does not exist in the source", "irrelevant")
@@ -389,7 +427,14 @@ def test_str_replace_old_str_not_unique_returns_error(tmp_path):
     class AmbiguousAnchorLLM(FakeLLM):
         def __init__(self):
             super().__init__()
-            self._script = [self._design_brief, self._fixed_submit, self._patch, self._finish]
+            self._script = [
+                self._design_brief,
+                self._fixed_submit,
+                self._patch,
+                self._verify_query,
+                self._verify_inspect,
+                self._finish,
+            ]
 
         def _patch(self):
             # "stone'" appears twice in _FIXED_SUBMIT_CODE (walls + floor)
@@ -424,7 +469,14 @@ def test_failing_str_replace_leaves_best_grid_untouched(tmp_path):
     class BadReplaceLLM(FakeLLM):
         def __init__(self):
             super().__init__()
-            self._script = [self._design_brief, self._fixed_submit, self._bad_patch, self._finish]
+            self._script = [
+                self._design_brief,
+                self._fixed_submit,
+                self._bad_patch,
+                self._verify_query,
+                self._verify_inspect,
+                self._finish,
+            ]
 
         def _bad_patch(self):
             return _str_replace("clear(2, 1, 0, 2, 2, 0)", "set_block(0,0,0,'not_a_real_block')")
@@ -523,7 +575,14 @@ def test_inspect_free_camera_mode(tmp_path):
     class FreeCamLLM(FakeLLM):
         def __init__(self):
             super().__init__()
-            self._script = [self._design_brief, self._fixed_submit, self._inspect, self._finish]
+            self._script = [
+                self._design_brief,
+                self._fixed_submit,
+                self._inspect,
+                self._verify_query,
+                self._verify_inspect,
+                self._finish,
+            ]
 
         def _inspect(self):
             return _tool_msg("inspect", {"camera_pos": [10, 5, 10], "look_at": [2, 1, 2]})
@@ -543,7 +602,14 @@ def test_query_tool_returns_text_ground_truth(tmp_path):
     class QueryLLM(FakeLLM):
         def __init__(self):
             super().__init__()
-            self._script = [self._design_brief, self._fixed_submit, self._query, self._finish]
+            self._script = [
+                self._design_brief,
+                self._fixed_submit,
+                self._query,
+                self._verify_query,
+                self._verify_inspect,
+                self._finish,
+            ]
 
         def _query(self):
             return _tool_msg("query", {"mode": "histogram"})
@@ -564,7 +630,14 @@ def test_edit_region_clears_then_rebuilds_only_the_box(tmp_path):
     class EditRegionLLM(FakeLLM):
         def __init__(self):
             super().__init__()
-            self._script = [self._design_brief, self._submit_slab, self._edit, self._finish]
+            self._script = [
+                self._design_brief,
+                self._submit_slab,
+                self._edit,
+                self._verify_query,
+                self._verify_inspect,
+                self._finish,
+            ]
 
         def _submit_slab(self):
             # a 5x1x5 stone slab at y=0
@@ -635,14 +708,14 @@ def test_prompt_caching_breakpoint_on_last_block_of_list_content():
 
 def test_turn_usage_event_emitted_each_llm_call(tmp_path):
     events: list[tuple[str, dict]] = []
-    llm = FakeLLM()  # design_brief, broken_submit, fixed_submit, finish = 4 turns
+    llm = FakeLLM()  # design_brief, broken_submit, fixed_submit, verify_query, verify_inspect, finish = 6 turns
     config = Config(max_iters=6, seed=1)
     rundir = RunDir.create("hut", base=str(tmp_path))
     run_agent("hut", llm, config, rundir, on_event=lambda t, d: events.append((t, d)))
 
     turn_events = [d for t, d in events if t == "turn_usage"]
-    assert len(turn_events) == 4
-    assert [d["turn"] for d in turn_events] == [1, 2, 3, 4]
+    assert len(turn_events) == 6
+    assert [d["turn"] for d in turn_events] == [1, 2, 3, 4, 5, 6]
     for d in turn_events:
         assert d["prompt_tokens"] == 10
         assert d["completion_tokens"] == 10

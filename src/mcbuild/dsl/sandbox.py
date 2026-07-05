@@ -15,6 +15,7 @@ import builtins as _builtins
 import sys
 import time
 
+from mcbuild import palette
 from mcbuild import voxel as _voxel
 from mcbuild.dsl import errors, stdlib
 from mcbuild.palette import PaletteError
@@ -170,6 +171,7 @@ def run_blueprint(
 
     old_trace = sys.gettrace()
     sys.settrace(tracer)
+    palette.reset_warnings()
     try:
         exec(code, global_ns)
     except BudgetExceeded as e:
@@ -180,3 +182,4 @@ def run_blueprint(
         raise errors.from_exception(e, source, filename) from e
     finally:
         sys.settrace(old_trace)
+    grid.palette_warnings = palette.pop_warnings()

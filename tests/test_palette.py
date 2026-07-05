@@ -1,6 +1,6 @@
 import pytest
 
-from mcbuild.palette import PaletteError, get_block, suggest
+from mcbuild.palette import PaletteError, get_block, pop_warnings, reset_warnings, suggest
 
 
 def test_get_known_block():
@@ -16,8 +16,16 @@ def test_get_block_with_minecraft_prefix():
 
 def test_unknown_block_raises_with_suggestion():
     with pytest.raises(PaletteError) as exc_info:
-        get_block("oak_plank")  # missing 's'
-    assert "oak_planks" in str(exc_info.value)
+        get_block("totally_bogus_block_xyz")
+    assert "Unknown block" in str(exc_info.value)
+
+
+def test_near_miss_typo_auto_corrects_with_warning():
+    reset_warnings()
+    block = get_block("oak_plank")  # missing 's' — close enough to auto-correct
+    assert block.mc_id == "minecraft:oak_planks"
+    warnings = pop_warnings()
+    assert any("oak_plank" in w and "oak_planks" in w for w in warnings)
 
 
 def test_suggest_returns_close_matches():

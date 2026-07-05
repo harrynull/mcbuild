@@ -265,7 +265,7 @@ def run_agent(
         (iter_dir / "stats.json").write_text(json.dumps(stats, indent=2))
         if len(grid) > 0:
             export_schem(grid, str(iter_dir / "blueprint.schem"))
-        emit("render", iteration=iteration, stats=stats, image=sheet)
+        emit("render", iteration=iteration, stats=stats, image=sheet, grid=grid)
         result_text = _format_stats_for_tool(stats)
         if note:
             result_text += "\n" + note

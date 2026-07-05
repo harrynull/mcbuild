@@ -9,5 +9,11 @@ dist/
 build/
 !docs/images/*.png
 *.mcmeta
+!mod/src/main/resources/pack.mcmeta
 .serena/
 .pytest_cache/
+
+# Forge mod build outputs (mod/build/ is already covered by the blanket build/ rule above)
+mod/.gradle/
+mod/run/
+mod/run-server/

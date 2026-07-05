@@ -16,10 +16,12 @@ dependencies = [
     "rich-pixels>=3.0",
     "typer>=0.12",
     "python-dotenv>=1.0",
+    "websockets>=13.0",
 ]
 
 [project.scripts]
 mcbuild = "mcbuild.cli:main"
+mcbuild-server = "mcbuild.server.ws_server:main"
 
 [project.optional-dependencies]
 dev = [

@@ -1,8 +1,10 @@
 """AST-whitelist sandbox + op-budget executor for blueprint code.
 
 Threat model: LLM accidents (infinite loops, silly mistakes), not a malicious
-adversary — execution stays in-process. We block imports, dunder/attribute
-escapes, and a handful of dangerous builtins, then run under a line-count +
+adversary — execution stays in-process. Import statements are stripped rather
+than rejected (everything a blueprint needs is already injected as globals;
+see dsl/REFERENCE.md), dunder/attribute escapes and a handful of dangerous
+builtins are blocked outright, and execution runs under a line-count +
 wall-clock budget via sys.settrace.
 """
 
@@ -91,16 +93,39 @@ class BudgetExceeded(Exception):
 
 def validate_ast(tree: ast.AST) -> None:
     for node in ast.walk(tree):
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            raise SandboxViolation("Import statements are not allowed in blueprints.", getattr(node, "lineno", None))
         if isinstance(node, ast.Attribute) and node.attr.startswith("_"):
             raise SandboxViolation(f"Access to attribute '{node.attr}' is not allowed.", node.lineno)
         if isinstance(node, ast.Name) and node.id in BANNED_NAMES:
             raise SandboxViolation(f"Use of '{node.id}' is not allowed.", node.lineno)
 
 
+class _ImportStripper(ast.NodeTransformer):
+    """Removes import statements wholesale instead of rejecting the whole blueprint.
+
+    Everything a blueprint needs is already injected as globals (see dsl/REFERENCE.md),
+    so a stray `import` is harmless to drop; if the blueprint actually relied on the
+    imported name, it fails naturally with a NameError at the point of use instead.
+    """
+
+    def visit_Import(self, node: ast.Import) -> None:
+        return None
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        return None
+
+    def generic_visit(self, node: ast.AST) -> ast.AST:
+        node = super().generic_visit(node)
+        body = getattr(node, "body", None)
+        if isinstance(body, list) and not body:
+            # A block can't be empty; fix_missing_locations (called by the caller) fills lineno.
+            setattr(node, "body", [ast.Pass()])  # noqa: B010
+        return node
+
+
 def compile_blueprint(source: str, filename: str = BLUEPRINT_FILENAME) -> ast.Module:
     tree = ast.parse(source, filename=filename)
+    tree = _ImportStripper().visit(tree)
+    ast.fix_missing_locations(tree)
     validate_ast(tree)
     return tree
 

@@ -11,11 +11,28 @@ def test_simple_fill_executes():
     assert len(grid) == 8
 
 
-def test_import_is_blocked():
+def test_import_is_stripped_not_blocked():
     grid = VoxelGrid()
-    with pytest.raises(BlueprintError) as exc_info:
-        run_blueprint("import os\nfill(0,0,0,1,1,1,'stone')", grid)
-    assert "not allowed" in str(exc_info.value)
+    run_blueprint("import os\nfill(0,0,0,1,1,1,'stone')", grid)
+    assert len(grid) == 8
+
+
+def test_import_from_is_stripped():
+    grid = VoxelGrid()
+    run_blueprint("from os import path\nfill(0,0,0,1,1,1,'stone')", grid)
+    assert len(grid) == 8
+
+
+def test_relying_on_stripped_import_fails_with_name_error():
+    grid = VoxelGrid()
+    with pytest.raises(BlueprintError):
+        run_blueprint("import os\nx = os.getcwd()\n", grid)
+
+
+def test_import_as_only_statement_in_block_still_compiles():
+    grid = VoxelGrid()
+    run_blueprint("if True:\n    import os\nfill(0,0,0,1,1,1,'stone')", grid)
+    assert len(grid) == 8
 
 
 def test_dunder_attribute_access_blocked():

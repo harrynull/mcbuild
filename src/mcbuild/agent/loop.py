@@ -400,7 +400,11 @@ def run_agent(
             tool_calls = getattr(msg, "tool_calls", None) or []
             if not tool_calls:
                 if best_grid is None:
-                    nudge = "Please proceed: call submit_blueprint with your design."
+                    nudge = (
+                        "Please proceed: call submit_blueprint now, in this turn. If you wrote "
+                        "blueprint code above as plain text, it did not run — pass it as the "
+                        "`code` argument of an actual submit_blueprint tool call."
+                    )
                 else:
                     nudge = (
                         "Please proceed: refine with str_replace or edit_region, verify with "

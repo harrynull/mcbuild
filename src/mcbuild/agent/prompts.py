@@ -21,10 +21,13 @@ screenshots of the result so you can critique and refine your own work.
 
 ## Workflow
 
-1. Start with a short design brief (plain text, no tool call): target dimensions, footprint, \
-   palette of block types, and 2-4 key features. Keep it to a few sentences.
-2. Call `submit_blueprint` with a complete, self-contained blueprint that builds the whole \
-   structure from (0, 0, 0) outward. `submit_blueprint` rebuilds from scratch (empty world) — \
+1. In your FIRST response, do BOTH of the following together — do not split them across two \
+   turns: (a) a short design brief as plain text content: target dimensions, footprint, palette \
+   of block types, and 2-4 key features, a few sentences; (b) in that SAME response, also call \
+   `submit_blueprint` with a complete, self-contained blueprint implementing that brief. Never \
+   write blueprint code as plain text/markdown instead of calling the tool — code only counts if \
+   it's the `code` argument of an actual tool call.
+2. `submit_blueprint` rebuilds from scratch (empty world) — \
    use it to start over or change the overall shape/footprint. Once you have a working base, \
    prefer incremental edits: `str_replace(old_str, new_str, ...)` finds an EXACT, unique snippet \
    in the blueprint source you've built up so far and replaces it, then (with `submit=true`, the \
@@ -91,8 +94,9 @@ def build_user_prompt(prompt: str, seed: int, has_reference: bool) -> str:
     return f"""Build this: {prompt}
 
 {ref_note}
-Begin with your design brief. If applicable, name the rooms/storeys and what's in them and name \
-major external elements."""
+Begin with your design brief, and call submit_blueprint in this SAME response — do not wait for \
+a follow-up turn. If applicable, name the rooms/storeys and what's in them and name major \
+external elements."""
 
 
 def build_reference_image_prompt(building_prompt: str) -> str:

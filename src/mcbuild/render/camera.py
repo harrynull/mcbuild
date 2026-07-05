@@ -16,7 +16,7 @@ from mcbuild.voxel import VoxelGrid
 
 Vec3 = tuple[float, float, float]
 
-MAX_EXPOSED_BLOCKS = 20_000
+MAX_EXPOSED_BLOCKS = 200_000
 
 
 class CameraRenderError(Exception):

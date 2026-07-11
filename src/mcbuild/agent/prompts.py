@@ -27,7 +27,14 @@ screenshots of the result so you can critique and refine your own work.
    `submit_blueprint` with a complete, self-contained blueprint implementing that brief. Never \
    write blueprint code as plain text/markdown instead of calling the tool — code only counts if \
    it's the `code` argument of an actual tool call.
-2. `submit_blueprint` rebuilds from scratch (empty world) — \
+2. Every build call (`submit_blueprint`, `str_replace` with submit=true, `edit_region`) requires \
+   a `views` argument: a list of the renderings you want back afterward, each like `{{"yaw": 0}}`, \
+   `{{"yaw": 2, "cutaway": "x"}}`, or `{{"mode": "top-down"}}` — at least one is required (and at \
+   most 8), nothing is sent automatically. A cutaway must face the cut or it's rejected: pair \
+   cutaway='x' with yaw 2 or 3, and cutaway='z' with yaw 1 or 2. Ask for enough angles to \
+   actually judge the build (e.g. 2-4 isometric yaws plus a cutaway once there's an interior); \
+   for a quick single-line fix you can ask for just one relevant view. `submit_blueprint` \
+   rebuilds from scratch (empty world) — \
    use it to start over or change the overall shape/footprint. Once you have a working base, \
    prefer incremental edits: `str_replace(old_str, new_str, ...)` finds an EXACT, unique snippet \
    in the blueprint source you've built up so far and replaces it, then (with `submit=true`, the \
@@ -44,13 +51,14 @@ screenshots of the result so you can critique and refine your own work.
    of the build.
 3. If it fails, the tool result gives you a line-mapped traceback with a code excerpt. Fix the \
    bug and resubmit.
-4. If it succeeds, you'll receive build stats, then a follow-up message with a labeled \
-   contact-sheet image (4 isometric angles, a top-down view, and 2 interior cutaways). Critique \
-   your own render against the prompt using this checklist:
+4. If it succeeds, you'll receive build stats, then a follow-up message with a contact-sheet \
+   image containing exactly the views you asked for, labeled in order. Critique your own render \
+   against the prompt using this checklist:
    - Does it match the prompt's description and scale?
    - Are the proportions and massing believable?
    - Do the materials/palette fit the theme?
-   - Is the interior (visible in the cutaways) sensible, not just a hollow shell?
+   - Is the interior sensible, not just a hollow shell? (You only see it if you requested a \
+     cutaway or slice view — do so once there's an interior worth checking.)
    - Are there missing details (windows, doors, trim, roofline) that would make it read as
      finished rather than a blockout?
 5. `inspect` and `query` are FREE — they never consume your edit budget. Look BEFORE you spend \
@@ -108,19 +116,20 @@ def build_reference_image_prompt(building_prompt: str) -> str:
 
 def build_critique_nudge() -> str:
     return (
-        "Here is the current render: 4 isometric angles, a top-down view, and 2 interior "
-        "cutaways, with build stats below. Critique it against the prompt: does it match the "
-        "prompt and scale? Are proportions and materials right? Does the interior make sense? "
-        "What details are missing? List the 2-3 biggest defects and where they are (use the "
-        "bounds in the stats for coordinates), then fix the biggest one. Verify with a free "
-        "inspect/query first if unsure. Then submit a revision or call finish if genuinely done."
+        "Above is the contact sheet with the views you requested, labeled in order, with build "
+        "stats below. Critique it against the prompt: does it match the prompt and scale? Are "
+        "proportions and materials right? Does the interior make sense? What details are missing? "
+        "If you didn't request a view that would answer that, ask for it (via `views` on your "
+        "next build, or a free `inspect`/`query`) rather than guessing. List the 2-3 biggest "
+        "defects and where they are (use the bounds in the stats for coordinates), then fix the "
+        "biggest one. Then submit a revision or call finish if genuinely done."
     )
 
 
 def build_reference_critique_nudge() -> str:
     return (
-        "Above are the concept REFERENCE and YOUR CURRENT BUILD (4 iso angles + top-down + 2 "
-        "cutaways), with stats. Compare them side by side and list the 3 BIGGEST discrepancies in "
+        "Above are the concept REFERENCE and YOUR CURRENT BUILD (the views you requested, labeled "
+        "in order), with stats. Compare them side by side and list the 3 BIGGEST discrepancies in "
         "massing, roof shape, palette, and opening rhythm — be specific about where. Then fix the "
         "largest discrepancy (str_replace/edit_region, using the bounds in the stats for "
         "coordinates). Verify with a free inspect/query if unsure. Call finish only when the build "

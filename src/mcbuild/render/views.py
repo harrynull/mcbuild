@@ -1,4 +1,4 @@
-"""Compose the 4 iso yaws + top-down + 2 cutaways into one contact sheet."""
+"""Compose model-requested renderings into one contact sheet."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from mcbuild.voxel import VoxelGrid
 MAX_WIDTH = 1100
 THUMB = 360
 BG = (24, 24, 28)
+MAX_COLS = 4
 
 
 def build_stats(grid: VoxelGrid) -> dict:
@@ -44,21 +45,41 @@ def _fit(img: Image.Image, size: int) -> Image.Image:
     return canvas
 
 
-def build_contact_sheet(grid: VoxelGrid) -> tuple[Image.Image, dict]:
+def render_view(grid: VoxelGrid, spec: dict) -> tuple[str, Image.Image]:
+    """Render one contact-sheet tile from a model-requested view spec.
+
+    Spec fields: mode ("iso", default, or "top-down"), yaw (0-3, iso only), cutaway
+    ("none"/"x"/"z"), or slice_axis+slice_at for an arbitrary plane (overrides cutaway).
+    Specs come pre-validated by the agent loop (_normalized_view_spec); the yaw wrap here
+    is only a last-resort guard so the label always matches what was rendered.
+    """
+    mode = spec.get("mode", "iso")
+    if mode == "top-down":
+        return "top-down", render_topdown(grid)
+
+    yaw = int(spec.get("yaw", 0) or 0) % 4
+    slice_axis = spec.get("slice_axis")
+    slice_at = spec.get("slice_at")
+    if slice_axis is not None and slice_at is not None:
+        img = render_iso(grid, yaw=yaw, slice_spec=(slice_axis, int(slice_at)))
+        return f"yaw {yaw * 90}deg, slice {slice_axis}={int(slice_at)}", img
+
+    cutaway = spec.get("cutaway", "none")
+    clip = None if cutaway in (None, "none") else cutaway
+    img = render_iso(grid, yaw=yaw, clip=clip)
+    label = f"yaw {yaw * 90}deg" + (f", cutaway {cutaway}" if clip else "")
+    return label, img
+
+
+def build_contact_sheet(grid: VoxelGrid, view_specs: list[dict]) -> tuple[Image.Image, list[str], dict]:
+    """Render exactly the views the model requested (at least one) into one contact sheet."""
     stats = build_stats(grid)
 
-    tiles: list[tuple[str, Image.Image]] = []
-    for yaw in range(4):
-        tiles.append((f"iso {yaw * 90}deg", render_iso(grid, yaw=yaw)))
-    tiles.append(("top-down", render_topdown(grid)))
-    # clip keeps the FAR half and drops the near half; the newly-exposed cut face only faces
-    # the camera when the camera sits on that same near side. yaw=0's azimuth is on the wrong
-    # side for both axes, so it just showed a smaller, uncut-looking version of the "iso 0deg"
-    # tile — yaw=2 (x) / yaw=1 (z) are actually on the near side and reveal the interior.
-    tiles.append(("cutaway x", render_iso(grid, yaw=2, clip="x")))
-    tiles.append(("cutaway z", render_iso(grid, yaw=1, clip="z")))
+    tiles = [render_view(grid, spec) for spec in view_specs]
+    labels = [label for label, _ in tiles]
 
-    cols, rows = 4, 2
+    cols = max(1, min(MAX_COLS, len(tiles)))
+    rows = -(-len(tiles) // cols)  # ceil division
     cell_w, cell_h = THUMB + 20, THUMB + 20
     sheet = Image.new("RGB", (cols * cell_w, rows * cell_h), BG)
 
@@ -73,4 +94,4 @@ def build_contact_sheet(grid: VoxelGrid) -> tuple[Image.Image, dict]:
         ratio = MAX_WIDTH / sheet.width
         sheet = sheet.resize((MAX_WIDTH, int(sheet.height * ratio)), Image.Resampling.LANCZOS)
 
-    return sheet, stats
+    return sheet, labels, stats

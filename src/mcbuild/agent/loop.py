@@ -19,7 +19,6 @@ from mcbuild.export.schem import export_schem
 from mcbuild.llm.client import Usage, image_to_data_url
 from mcbuild.render import views
 from mcbuild.render.camera import Camera, CameraRenderError, render_from_camera
-from mcbuild.render.iso import render_iso
 from mcbuild.rundir import RunDir
 from mcbuild.voxel import VoxelGrid
 
@@ -138,6 +137,109 @@ def _format_stats_for_tool(stats: dict) -> str:
     else:
         bounds_str = ""
     return f"Build succeeded. dimensions={dims_str}{bounds_str} blocks={stats['block_count']} top_materials=[{mats}]"
+
+
+# A cutaway/slice keeps the FAR half of the build, so the cut face is only visible from
+# yaws whose camera sits on the removed near side: x -> yaws 2/3, z -> yaws 1/2.
+_CUTAWAY_FACING_YAWS = {"x": (2, 3), "z": (1, 2)}
+_VIEW_SPEC_KEYS = ("mode", "yaw", "cutaway", "slice_axis", "slice_at")
+
+
+def _normalized_view_spec(spec: Any) -> tuple[dict | None, str | None]:
+    """Validate one view spec against what render_view can honor; returns (normalized, error).
+
+    The JSON schema in tools.py states the same constraints, but LLM tool arguments don't
+    reliably respect schemas — everything must be re-checked here so a bad spec comes back
+    as a fixable tool error instead of crashing the run or silently mislabeling a render.
+    """
+    if not isinstance(spec, dict):
+        return None, f'each view must be an object like {{"yaw": 0}}, got {spec!r}'
+    unknown = sorted(set(spec) - set(_VIEW_SPEC_KEYS))
+    if unknown:
+        return None, f"unknown field(s) {unknown}; allowed: {', '.join(_VIEW_SPEC_KEYS)}"
+    mode = spec.get("mode") or "iso"
+    if mode not in ("iso", "top-down"):
+        return None, f"mode must be 'iso' or 'top-down', got {mode!r}"
+    if mode == "top-down":
+        ignored = [k for k in ("yaw", "cutaway", "slice_axis", "slice_at") if spec.get(k) not in (None, "none")]
+        if ignored:
+            return None, f"top-down views don't take {ignored} — drop them or use mode='iso'"
+        return {"mode": "top-down"}, None
+    try:
+        yaw = int(spec.get("yaw") or 0)
+    except (TypeError, ValueError):
+        return None, f"yaw must be an integer 0-3, got {spec.get('yaw')!r}"
+    if not 0 <= yaw <= 3:
+        return None, f"yaw must be 0-3 (90-degree steps), got {yaw}"
+    cutaway = spec.get("cutaway") or "none"
+    if cutaway not in ("none", "x", "z"):
+        return None, (
+            f"cutaway must be 'x' or 'z' (vertical mid-plane cuts), got {cutaway!r} — for a "
+            "horizontal cut through a storey use slice_axis='y' with slice_at"
+        )
+    slice_axis = spec.get("slice_axis")
+    slice_at = spec.get("slice_at")
+    if (slice_axis is None) != (slice_at is None):
+        return None, "slice_axis and slice_at must be provided together"
+    if slice_axis is not None:
+        if cutaway != "none":
+            return None, "give either cutaway or slice_axis/slice_at, not both"
+        if slice_axis not in ("x", "y", "z"):
+            return None, f"slice_axis must be 'x', 'y', or 'z', got {slice_axis!r}"
+        try:
+            slice_at = int(slice_at)
+        except (TypeError, ValueError):
+            return None, f"slice_at must be an integer world coordinate, got {slice_at!r}"
+    cut_axis = slice_axis if slice_axis in _CUTAWAY_FACING_YAWS else (cutaway if cutaway != "none" else None)
+    if cut_axis is not None and yaw not in _CUTAWAY_FACING_YAWS[cut_axis]:
+        good = " or ".join(str(y) for y in _CUTAWAY_FACING_YAWS[cut_axis])
+        return None, (
+            f"a cut on '{cut_axis}' keeps the far half, so yaw={yaw} would show an uncut-looking "
+            f"exterior — use yaw {good} so the camera faces the cut"
+        )
+    normalized: dict = {"yaw": yaw}
+    if cutaway != "none":
+        normalized["cutaway"] = cutaway
+    if slice_axis is not None:
+        normalized["slice_axis"] = slice_axis
+        normalized["slice_at"] = slice_at
+    return normalized, None
+
+
+def _validated_views(args: dict) -> tuple[list[dict], str | None]:
+    """Validate/normalize the `views` build-tool arg: 1-MAX_VIEWS renderable view specs.
+
+    Returns (view_specs, None) on success, or ([], error_message) to be sent back as the
+    tool result instead of running the blueprint.
+    """
+    views_arg = args.get("views")
+    if not isinstance(views_arg, list) or len(views_arg) == 0:
+        return [], (
+            "You must specify at least one view in `views` for the contact sheet you'll receive "
+            'after this build — e.g. views=[{"yaw": 0}] or views=[{"mode": "top-down"}, '
+            '{"yaw": 2, "cutaway": "x"}].'
+        )
+    if len(views_arg) > tools.MAX_VIEWS:
+        return [], (
+            f"Too many views ({len(views_arg)}) — each one is a full render. Request at most "
+            f"{tools.MAX_VIEWS} per build; you can always inspect more angles for free afterward."
+        )
+    normalized: list[dict] = []
+    problems: list[str] = []
+    for i, spec in enumerate(views_arg):
+        norm, err = _normalized_view_spec(spec)
+        if err:
+            problems.append(f"views[{i}]: {err}")
+        else:
+            normalized.append(norm)
+    if problems:
+        return [], "Invalid `views` (nothing was built or rendered — fix and retry):\n" + "\n".join(problems)
+    return normalized, None
+
+
+def _has_interior_view(view_specs: list[dict]) -> bool:
+    """True if any normalized view is a cutaway/slice — counts as seeing the interior for finish()."""
+    return any(s.get("cutaway") is not None or s.get("slice_axis") is not None for s in view_specs)
 
 
 def _grid_delta(before: VoxelGrid, after: VoxelGrid) -> str:
@@ -297,15 +399,23 @@ def run_agent(
     builds_done = 0  # successful builds; the edit budget (config.max_iters) counts these only
     consecutive_failures = 0
     did_query_slice = False  # True once query(mode="slice") has run against the current build
-    did_inspect_cutaway = False  # True once inspect with a cutaway/slice has run against the current build
+    did_inspect_cutaway = False  # True once a cutaway/slice of the current build has been seen (via views or inspect)
 
     def finalize(finished: bool, summary: str) -> AgentResult:
         rundir.write_json("session.json", _sanitize_messages_for_json(messages))
         return AgentResult(finished, summary, best_grid, best_stats, iteration, llm.total_usage)
 
-    def report_success(grid: VoxelGrid, iteration: int, iter_dir, tc, note: str = "") -> dict:
+    def require_views(tc, args: dict) -> list[dict] | None:
+        """Validate `views` for a build tool; on error, append the tool result and return None."""
+        view_specs, view_error = _validated_views(args)
+        if view_error:
+            messages.append(_tool_result(tc.id, view_error))
+            return None
+        return view_specs
+
+    def report_success(grid: VoxelGrid, iteration: int, iter_dir, tc, view_specs: list[dict], note: str = "") -> dict:
         """Render/save/export a successful build and queue the critique image. Returns stats."""
-        sheet, stats = views.build_contact_sheet(grid)
+        sheet, labels, stats = views.build_contact_sheet(grid, view_specs)
         rundir.save_image(f"iter_{iteration:02d}/render.png", sheet)
         (iter_dir / "stats.json").write_text(json.dumps(stats, indent=2))
         if len(grid) > 0:
@@ -316,16 +426,21 @@ def run_agent(
             result_text += "\n" + note
         messages.append(_tool_result(tc.id, result_text))
 
+        views_line = "Renderings included below (left-to-right, top-to-bottom): " + ", ".join(
+            f"{i + 1}) {label}" for i, label in enumerate(labels)
+        )
+
         content: list[dict] = []
         if ref_thumb_url is not None:
             content.append({"type": "text", "text": "REFERENCE (reproduce this closely):"})
             content.append({"type": "image_url", "image_url": {"url": ref_thumb_url}})
             content.append({"type": "text", "text": "YOUR CURRENT BUILD:"})
             content.append({"type": "image_url", "image_url": {"url": image_to_data_url(sheet)}})
-            content.append({"type": "text", "text": prompts.build_reference_critique_nudge()})
+            content.append({"type": "text", "text": views_line + "\n" + prompts.build_reference_critique_nudge()})
         else:
-            content.append({"type": "text", "text": prompts.build_critique_nudge()})
+            content.append({"type": "text", "text": views_line})
             content.append({"type": "image_url", "image_url": {"url": image_to_data_url(sheet)}})
+            content.append({"type": "text", "text": prompts.build_critique_nudge()})
         messages.append({"role": "user", "content": content})
         return stats
 
@@ -425,7 +540,9 @@ def run_agent(
                     if not did_query_slice:
                         missing.append("a query(mode='slice') call")
                     if not did_inspect_cutaway:
-                        missing.append("an inspect call with a cutaway or slice")
+                        missing.append(
+                            "a cutaway or slice view (request one via `views` on a build, or a free inspect)"
+                        )
                     if missing:
                         messages.append(
                             _tool_result(
@@ -453,6 +570,9 @@ def run_agent(
                             )
                         )
                         continue
+                    view_specs = require_views(tc, args)
+                    if view_specs is None:
+                        continue
                     iteration += 1
                     code = args.get("code", "")
                     design_notes = args.get("design_notes", "")
@@ -475,11 +595,13 @@ def run_agent(
                     consecutive_failures = 0
                     builds_done += 1
                     did_query_slice = False
-                    did_inspect_cutaway = False
+                    did_inspect_cutaway = _has_interior_view(view_specs)
                     cumulative_source = code  # a full submit RESETS the construction history
                     best_grid, best_stats = (
                         grid,
-                        report_success(grid, iteration, iter_dir, tc, note=_warning_note(grid) + budget_line()),
+                        report_success(
+                            grid, iteration, iter_dir, tc, view_specs, note=_warning_note(grid) + budget_line()
+                        ),
                     )
                     continue
 
@@ -497,6 +619,9 @@ def run_agent(
                                 "build (further build calls are ignored).",
                             )
                         )
+                        continue
+                    view_specs = require_views(tc, args)
+                    if view_specs is None:
                         continue
 
                     iteration += 1
@@ -525,7 +650,7 @@ def run_agent(
                     consecutive_failures = 0
                     builds_done += 1
                     did_query_slice = False
-                    did_inspect_cutaway = False
+                    did_inspect_cutaway = _has_interior_view(view_specs)
                     delta = _grid_delta(best_grid, candidate)
                     header = f"\n\n# --- {name}" + (f" region={region}" if region else "") + " ---\n"
                     cumulative_source = cumulative_source + header + code
@@ -537,6 +662,7 @@ def run_agent(
                             iteration,
                             iter_dir,
                             tc,
+                            view_specs,
                             note=_warning_note(candidate) + delta + "\n" + budget_line(),
                         ),
                     )
@@ -600,6 +726,11 @@ def run_agent(
                             )
                         )
                         continue
+                    # Views are only required when submit=true — the submit=false path
+                    # already returned above, matching the tool schema's promise.
+                    view_specs = require_views(tc, args)
+                    if view_specs is None:
+                        continue
 
                     iteration += 1
                     iter_dir = rundir.iter_dir(iteration)
@@ -621,7 +752,7 @@ def run_agent(
                     consecutive_failures = 0
                     builds_done += 1
                     did_query_slice = False
-                    did_inspect_cutaway = False
+                    did_inspect_cutaway = _has_interior_view(view_specs)
                     delta = _grid_delta(best_grid, candidate)
                     cumulative_source = new_source
                     best_grid, best_stats = (
@@ -631,6 +762,7 @@ def run_agent(
                             iteration,
                             iter_dir,
                             tc,
+                            view_specs,
                             note=_warning_note(candidate) + delta + "\n" + budget_line(),
                         ),
                     )
@@ -640,10 +772,6 @@ def run_agent(
                     if best_grid is None:
                         messages.append(_tool_result(tc.id, "Nothing has been built yet; call submit_blueprint first."))
                         continue
-                    yaw = int(args.get("yaw", 0) or 0)
-                    cutaway = args.get("cutaway", "none")
-                    slice_axis = args.get("slice_axis")
-                    slice_at = args.get("slice_at")
                     camera_pos = args.get("camera_pos")
                     look_at = args.get("look_at")
                     if camera_pos is not None and look_at is not None:
@@ -655,18 +783,26 @@ def run_agent(
                             continue
                         label = f"Free-camera inspection (camera_pos={camera_pos}, look_at={look_at}):"
                         emit("inspect", mode="camera", camera_pos=camera_pos, look_at=look_at, image=img)
-                    elif slice_axis is not None and slice_at is not None:
-                        img = render_iso(best_grid, yaw=yaw, slice_spec=(slice_axis, int(slice_at)))
-                        label = f"Inspection view (yaw={yaw}, slice {slice_axis}={int(slice_at)}):"
-                        did_inspect_cutaway = True
-                        emit("inspect", yaw=yaw, slice_axis=slice_axis, slice_at=int(slice_at), image=img)
                     else:
-                        clip = None if cutaway in (None, "none") else cutaway
-                        img = render_iso(best_grid, yaw=yaw, clip=clip)
-                        label = f"Inspection view (yaw={yaw}, cutaway={cutaway}):"
-                        if clip is not None:
+                        # Same spec grammar, validation, and render dispatch as build `views`
+                        # entries (render_view), so the two paths can't drift apart.
+                        raw_spec = {k: args[k] for k in _VIEW_SPEC_KEYS if args.get(k) is not None}
+                        spec, spec_error = _normalized_view_spec(raw_spec)
+                        if spec_error:
+                            messages.append(_tool_result(tc.id, f"inspect failed: {spec_error}"))
+                            continue
+                        view_label, img = views.render_view(best_grid, spec)
+                        label = f"Inspection view ({view_label}):"
+                        if _has_interior_view([spec]):
                             did_inspect_cutaway = True
-                        emit("inspect", yaw=yaw, cutaway=cutaway, image=img)
+                        emit(
+                            "inspect",
+                            yaw=spec.get("yaw", 0),
+                            cutaway=spec.get("cutaway", "none"),
+                            slice_axis=spec.get("slice_axis"),
+                            slice_at=spec.get("slice_at"),
+                            image=img,
+                        )
                     messages.append(_tool_result(tc.id, "Inspection render attached in the next message."))
                     messages.append(
                         {

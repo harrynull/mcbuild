@@ -71,7 +71,7 @@ class FakeLLM:
                     id="call_1",
                     function=_FnCall(
                         name="submit_blueprint",
-                        arguments=json.dumps({"code": code, "design_notes": "first attempt"}),
+                        arguments=json.dumps({"code": code, "design_notes": "first attempt", "views": [{"yaw": 0}]}),
                     ),
                 )
             ]
@@ -87,7 +87,13 @@ class FakeLLM:
                     id="call_2",
                     function=_FnCall(
                         name="submit_blueprint",
-                        arguments=json.dumps({"code": code, "design_notes": "fixed block name, added doorway"}),
+                        arguments=json.dumps(
+                            {
+                                "code": code,
+                                "design_notes": "fixed block name, added doorway",
+                                "views": [{"yaw": 0}, {"yaw": 2, "cutaway": "x"}, {"mode": "top-down"}],
+                            }
+                        ),
                     ),
                 )
             ],

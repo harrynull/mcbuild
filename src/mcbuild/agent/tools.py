@@ -3,6 +3,58 @@
 submit_blueprint / str_replace / edit_region / inspect / finish.
 """
 
+# Hard cap on renderings per build: each view is a full rasterization and the sheet is
+# resent to the model every iteration, so an uncapped list is unbounded render/token cost.
+# The agent loop re-validates against this at runtime (LLMs don't reliably honor schemas).
+MAX_VIEWS = 8
+
+# Shared by submit_blueprint/str_replace/edit_region: the model picks exactly which
+# renderings go into the contact sheet it gets back, instead of receiving a fixed set.
+VIEWS_PARAM = {
+    "type": "array",
+    "minItems": 1,
+    "maxItems": MAX_VIEWS,
+    "items": {
+        "type": "object",
+        "properties": {
+            "mode": {
+                "type": "string",
+                "enum": ["iso", "top-down"],
+                "description": "'iso' (default) for an isometric angle, or 'top-down' for a floor-plan view.",
+            },
+            "yaw": {
+                "type": "integer",
+                "description": "Camera rotation in 90-degree steps (0-3). iso mode only.",
+                "default": 0,
+            },
+            "cutaway": {
+                "type": "string",
+                "enum": ["none", "x", "z"],
+                "description": (
+                    "Slice at the mid-plane on this axis to see inside (keeps the FAR half). "
+                    "Only reads as a cross-section if the camera faces it — pair cutaway='x' "
+                    "with yaw 2 or 3, and cutaway='z' with yaw 1 or 2; other yaws are rejected."
+                ),
+                "default": "none",
+            },
+            "slice_axis": {
+                "type": "string",
+                "enum": ["x", "y", "z"],
+                "description": "Cut at an arbitrary plane on this axis instead of the mid-plane. Overrides cutaway.",
+            },
+            "slice_at": {
+                "type": "integer",
+                "description": "World coordinate of the slice plane (used with slice_axis).",
+            },
+        },
+    },
+    "description": (
+        "Which renderings to include in the contact sheet you'll get back after this build. "
+        f"REQUIRED, 1-{MAX_VIEWS} entries — you get exactly what you ask for, nothing automatic. "
+        'E.g. [{"yaw": 0}, {"yaw": 2, "cutaway": "x"}, {"mode": "top-down"}].'
+    ),
+}
+
 SUBMIT_BLUEPRINT_TOOL = {
     "type": "function",
     "function": {
@@ -13,7 +65,7 @@ SUBMIT_BLUEPRINT_TOOL = {
             "make structural changes to the overall shape/footprint. For small incremental "
             "tweaks to an existing build, prefer str_replace or edit_region. On error you "
             "get a line-mapped traceback to fix. On success you get build stats and, in a "
-            "follow-up message, a labeled multi-view contact-sheet render to critique."
+            "follow-up message, a contact sheet of the views you requested to critique."
         ),
         "parameters": {
             "type": "object",
@@ -23,8 +75,9 @@ SUBMIT_BLUEPRINT_TOOL = {
                     "type": "string",
                     "description": "Brief notes on what this blueprint builds or what changed since last time.",
                 },
+                "views": VIEWS_PARAM,
             },
-            "required": ["code", "design_notes"],
+            "required": ["code", "design_notes", "views"],
         },
     },
 }
@@ -51,8 +104,8 @@ STR_REPLACE_TOOL = {
             "unsure of the exact current text, call query(mode='source') first to fetch fresh "
             "ground truth rather than guessing. On a submitted error the pre-edit build is left "
             "untouched and you get a line-mapped traceback against the patched source. On success "
-            "you get updated stats and a fresh contact-sheet render. Requires a prior successful "
-            "submit_blueprint."
+            "you get updated stats and a contact sheet of the views you requested. Requires a "
+            "prior successful submit_blueprint."
         ),
         "parameters": {
             "type": "object",
@@ -72,6 +125,10 @@ STR_REPLACE_TOOL = {
                     "default": True,
                 },
                 "design_notes": {"type": "string", "description": "Brief notes on what this edit changes."},
+                "views": {
+                    **VIEWS_PARAM,
+                    "description": VIEWS_PARAM["description"] + " Ignored (and not required) when submit=false.",
+                },
             },
             "required": ["old_str", "new_str", "design_notes"],
         },
@@ -102,8 +159,9 @@ EDIT_REGION_TOOL = {
                 },
                 "code": {"type": "string", "description": "Blueprint snippet that rebuilds the region."},
                 "design_notes": {"type": "string", "description": "Brief notes on what this edit changes."},
+                "views": VIEWS_PARAM,
             },
-            "required": ["region", "code", "design_notes"],
+            "required": ["region", "code", "design_notes", "views"],
         },
     },
 }
@@ -216,8 +274,9 @@ FINISH_TOOL = {
         "name": "finish",
         "description": (
             "Declare the build complete and end the session. Before finishing, you must have "
-            "already called query(mode='slice') and inspect(...) with a cutaway/slice against "
-            "the CURRENT build (any subsequent edit resets this requirement)."
+            "already called query(mode='slice') and seen a cutaway/slice of the CURRENT build "
+            "(via a cutaway/slice entry in your latest build's `views`, or an inspect call); "
+            "any subsequent edit resets both requirements."
         ),
         "parameters": {
             "type": "object",

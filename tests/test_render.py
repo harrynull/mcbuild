@@ -57,13 +57,33 @@ def test_empty_grid_does_not_crash():
     assert isinstance(img2, Image.Image)
 
 
+_ALL_CLASSIC_VIEWS = [
+    {"yaw": 0},
+    {"yaw": 1},
+    {"yaw": 2},
+    {"yaw": 3},
+    {"mode": "top-down"},
+    {"yaw": 2, "cutaway": "x"},
+    {"yaw": 1, "cutaway": "z"},
+]
+
+
 def test_contact_sheet_builds_and_has_stats():
     grid = _small_house_grid()
-    sheet, stats = build_contact_sheet(grid)
+    sheet, labels, stats = build_contact_sheet(grid, _ALL_CLASSIC_VIEWS)
     assert sheet.width <= 1100  # MAX_WIDTH
+    assert len(labels) == len(_ALL_CLASSIC_VIEWS)
     assert stats["block_count"] == len(grid)
     assert stats["dims"] is not None
     assert len(stats["top_materials"]) > 0
+
+
+def test_contact_sheet_renders_a_single_requested_view():
+    # the at-least-one-view requirement itself is enforced (and tested) in the agent loop
+    grid = _small_house_grid()
+    sheet, labels, _stats = build_contact_sheet(grid, [{"yaw": 0}])
+    assert labels == ["yaw 0deg"]
+    assert sheet.width > 0 and sheet.height > 0
 
 
 def test_contact_sheet_cutaway_yaws_actually_face_the_cut():
@@ -91,9 +111,10 @@ def test_contact_sheet_has_no_overlaid_text():
     from mcbuild.render.views import BG
 
     grid = _small_house_grid()
-    sheet, _stats = build_contact_sheet(grid)
-    # grid is 4 cols x 2 rows of square cells with no footer/label row appended below, so the
-    # sheet's aspect ratio must stay exactly 2:1 regardless of any final MAX_WIDTH downscale
+    sheet, _labels, _stats = build_contact_sheet(grid, _ALL_CLASSIC_VIEWS)
+    # 7 requested views lay out as 4 cols x 2 rows of square cells (last cell unused) with no
+    # footer/label row appended below, so the sheet's aspect ratio must stay exactly 2:1
+    # regardless of any final MAX_WIDTH downscale
     assert sheet.width == 2 * sheet.height
     corner = sheet.getpixel((sheet.width - 1, sheet.height - 1))
     assert corner == BG

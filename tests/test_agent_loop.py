@@ -169,7 +169,7 @@ def test_success_result_includes_bounds_and_budget(tmp_path):
 def _str_replace(old_str, new_str, notes="x", submit=True):
     return _tool_msg(
         "str_replace",
-        {"old_str": old_str, "new_str": new_str, "design_notes": notes, "submit": submit},
+        {"old_str": old_str, "new_str": new_str, "design_notes": notes, "submit": submit, "views": [{"yaw": 0}]},
     )
 
 
@@ -233,6 +233,87 @@ def test_failed_build_does_not_consume_budget(tmp_path):
     # the failed submit is annotated as not using an edit, and the two real builds both ran
     assert any("did NOT use an edit" in t for t in texts)
     assert not any("Edit budget reached" in t for t in texts)
+
+
+def test_build_without_views_is_rejected_then_recovers(tmp_path):
+    class NoViewsFirstLLM(FakeLLM):
+        def __init__(self):
+            super().__init__()
+            self._script = [
+                self._no_views_submit,
+                self._fixed_submit,
+                self._verify_query,
+                self._verify_inspect,
+                self._finish,
+            ]
+
+        def _no_views_submit(self):
+            return _tool_msg("submit_blueprint", {"code": _FIXED_SUBMIT_CODE, "design_notes": "no views"})
+
+    llm = NoViewsFirstLLM()
+    config = Config(max_iters=6, seed=1)
+    rundir = RunDir.create("hut", base=str(tmp_path))
+    result = run_agent("hut", llm, config, rundir)
+    assert result.finished is True
+    assert any("at least one view" in t for t in _tool_texts(rundir))
+
+
+def test_malformed_view_specs_rejected_as_tool_errors_not_crashes(tmp_path):
+    # garbage view values must come back as fixable tool errors, never abort the run
+    bad_views = [
+        [{"yaw": "north"}],  # non-numeric yaw
+        ["top-down"],  # non-dict entry
+        [{"yaw": 0, "cutaway": "y"}],  # invalid cutaway axis
+        [{"yaw": 0, "cutaway": "x"}],  # camera doesn't face the cut
+        [{"slice_axis": "y"}],  # slice_axis without slice_at
+        [{"yaw": 0}] * 9,  # over the per-build cap
+    ]
+
+    class BadViewsLLM(FakeLLM):
+        def __init__(self):
+            super().__init__()
+            self._script = [
+                *[self._bad_submit(v) for v in bad_views],
+                self._fixed_submit,
+                self._verify_query,
+                self._verify_inspect,
+                self._finish,
+            ]
+
+        def _bad_submit(self, views):
+            return lambda: _tool_msg(
+                "submit_blueprint", {"code": _FIXED_SUBMIT_CODE, "design_notes": "x", "views": views}
+            )
+
+    llm = BadViewsLLM()
+    config = Config(max_iters=6, seed=1)
+    rundir = RunDir.create("hut", base=str(tmp_path))
+    result = run_agent("hut", llm, config, rundir)
+    assert result.finished is True
+    texts = _tool_texts(rundir)
+    assert any("yaw must be an integer" in t for t in texts)
+    assert any("each view must be an object" in t for t in texts)
+    assert any("cutaway must be 'x' or 'z'" in t for t in texts)
+    assert any("faces the cut" in t for t in texts)
+    assert any("provided together" in t for t in texts)
+    assert any("Too many views" in t for t in texts)
+    # none of the rejected submits consumed an edit or ran a blueprint
+    assert result.iterations == 1
+
+
+def test_cutaway_view_on_build_satisfies_finish_interior_check(tmp_path):
+    # _fixed_submit requests a cutaway view, so no separate inspect call should be needed
+    class NoInspectLLM(FakeLLM):
+        def __init__(self):
+            super().__init__()
+            self._script = [self._fixed_submit, self._verify_query, self._finish]
+
+    llm = NoInspectLLM()
+    config = Config(max_iters=6, seed=1)
+    rundir = RunDir.create("hut", base=str(tmp_path))
+    result = run_agent("hut", llm, config, rundir)
+    assert result.finished is True
+    assert not any("Cannot finish" in t for t in _tool_texts(rundir))
 
 
 def test_str_replace_result_reports_block_delta(tmp_path):
@@ -529,7 +610,7 @@ def test_images_are_never_pruned(tmp_path):
         m
         for m in msgs
         if isinstance(m.get("content"), list)
-        and any(isinstance(p, dict) and "4 isometric angles" in p.get("text", "") for p in m["content"])
+        and any(isinstance(p, dict) and "Renderings included below" in p.get("text", "") for p in m["content"])
     ]
     assert sheet_msgs, "contact-sheet critique message not found"
     assert _has_image(sheet_msgs[-1]["content"])  # latest sheet keeps its image
@@ -643,14 +724,19 @@ def test_edit_region_clears_then_rebuilds_only_the_box(tmp_path):
             # a 5x1x5 stone slab at y=0
             return _tool_msg(
                 "submit_blueprint",
-                {"code": "fill(0,0,0,4,0,4,'stone')", "design_notes": "slab"},
+                {"code": "fill(0,0,0,4,0,4,'stone')", "design_notes": "slab", "views": [{"yaw": 0}]},
             )
 
         def _edit(self):
             # replace the middle 3x1x3 region with glass
             return _tool_msg(
                 "edit_region",
-                {"region": [1, 0, 1, 3, 0, 3], "code": "fill(1,0,1,3,0,3,'glass')", "design_notes": "glass center"},
+                {
+                    "region": [1, 0, 1, 3, 0, 3],
+                    "code": "fill(1,0,1,3,0,3,'glass')",
+                    "design_notes": "glass center",
+                    "views": [{"yaw": 0}],
+                },
             )
 
     from mcbuild.palette import get_block

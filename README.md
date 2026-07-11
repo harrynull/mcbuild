@@ -26,7 +26,7 @@ prompt ──▶ LLM writes a blueprint (sandboxed Python DSL)
         DSL interpreter ──▶ sparse voxel grid
              │
              ▼
-     isometric renderer ──▶ labeled multi-view PNG (4 rotations + top-down + cutaways)
+     isometric renderer ──▶ contact-sheet PNG of the views the LLM requested (rotations / top-down / cutaways)
              │
              ▼
    vision LLM critiques the render, calls a tool to edit/query/finish
@@ -185,11 +185,12 @@ primitive/transform reference and worked examples.
   material histograms).
 - **`'air'`** is placeable — carves/erases and is exported as `minecraft:air`.
 
-Every iteration's self-critique render is a full contact sheet — four isometric
-rotations, a top-down view, and two axis cutaways, with dimensions/block-count/
-top-materials stats burned into the image:
+Every build call names the views it wants back (up to 8 per build — isometric
+yaws, top-down, cutaways/slices), and the self-critique render is a contact
+sheet of exactly those views, with dimensions/block-count/top-materials stats
+reported alongside:
 
-![Full contact sheet: iso rotations, top-down, and cutaways](docs/images/mansion-contact-sheet.png)
+![Contact sheet: iso rotations, top-down, and cutaways](docs/images/mansion-contact-sheet.png)
 
 ## Project layout
 
